@@ -7,6 +7,7 @@ import { layerTypes } from './layer';
 import { likely } from './likely';
 import { lookup } from './lookup';
 import { NeuralNetwork } from './neural-network';
+import { NeuralNetworkArangoDB } from './neural-network-arangodb';
 import { NeuralNetworkGPU } from './neural-network-gpu';
 import * as praxis from './praxis';
 import { Recurrent } from './recurrent';
@@ -63,6 +64,7 @@ export {
   praxis,
   FeedForward,
   NeuralNetwork,
+  NeuralNetworkArangoDB,
   NeuralNetworkGPU,
   Recurrent,
   recurrent,

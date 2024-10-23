@@ -11,8 +11,8 @@ const db = new Database({
   },
 });
 
-export const query = async (aql: string, option?: QueryOptions) => {
-  const cursor = await db.query(aql, option);
+export const query = async (aql: string, options?: QueryOptions) => {
+  const cursor = await db.query(aql, options);
   return await cursor.all();
 };
 
