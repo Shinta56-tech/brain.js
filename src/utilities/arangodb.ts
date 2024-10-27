@@ -42,7 +42,7 @@ export type QueryResult = number[] | NeuronSchema[];
 export const query = async (aql: string, options?: QueryOptions): Promise<QueryResult> => {
   const cursor = await db.query(aql, options);
   const result = await cursor.all();
-  return result;
+  return (result as unknown) as QueryResult;
 };
 
 export { QueryOptions };
