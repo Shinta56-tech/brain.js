@@ -2,11 +2,8 @@ import { INumberHash } from './lookup';
 import { INeuralNetworkState } from './neural-network-types';
 import {
   ArangoDBConfig,
-  NeuronSchema,
   connect,
-  QueryResult,
   query,
-  QueryOptions,
 } from './utilities/arangodb';
 
 export interface INeuralNetworkOptions {
@@ -90,18 +87,75 @@ export class NeuralNetworkArangoDB<
   trainOpts: INeuralNetworkTrainOptions = trainDefaults();
   sizes: number[] = [];
   // prettier-ignore
-  getQuery(field: string, i1: number | string, i2?: number | string, i3?: number | string): number {
+  async _getQuery(field: string, i1: number | string, i2?: number | string, i3?: number | string): Promise<number> {
     const aql = `
       FOR doc IN ${this.collection}
-      FILTER doc.name == "${this.name}" && doc.field == "${field}" && doc.i1 == ${i1} ${i2?`&& doc.i2 == ${i2}`:''} ${i3?`&& doc.i3 == ${i3}`:''}
+      FILTER doc.name == "${this.name}" && doc.field == "${field}" && doc.i1 == ${JSON.stringify(i1)} ${i2?`&& doc.i2 == ${JSON.stringify(i2)}`:''} ${i3?`&& doc.i3 == ${JSON.stringify(i3)}`:''}
       RETURN doc.number
     `;
-    const result: any = query(aql);
+    const result: any = await query(aql);
+    if (result.length > 0) {
+      return result[0] as number;
+    } else {
+      return 0;
+    }
+  };
+  // prettier-ignore
+  async _setQuery(field: string, number: number, i1: number | string, i2?: number | string, i3?: number | string): Promise<void> {
+    const aql = `
+      UPSERT {name: "${this.name}", field: "${field}", i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
+      INSERT {name: "${this.name}", field: "${field}", number: ${number}, i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
+      UPDATE {name: "${this.name}", field: "${field}", number: ${number}, i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
+      IN ${this.collection}
+    `;
+    await query(aql);
+  };
+  // prettier-ignore
+  async _lengthQuery(field: string, i1?: number | string, i2?: number | string): Promise<number> {
+    const aql = `
+      FOR doc IN ${this.collection}
+      FILTER doc.name == "${this.name}" && doc.field == "${field}"${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
+      COLLECT WITH COUNT INTO length
+      RETURN length
+    `;
+    const result: any = await query(aql);
     if (result.length > 0) {
       return result[0];
     } else {
       return 0;
     }
+  };
+  // prettier-ignore
+  async _clearQueryfield(field: string, i1?: number | string, i2?: number | string): Promise<void> {
+    const aql = `
+      FOR doc IN ${this.collection}
+      FILTER doc.name == "${this.name}" && doc.field == "${field}"${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
+      REMOVE doc IN ${this.collection}
+    `;
+    await query(aql);
+  };
+  // prettier-ignore
+  async _pushQuery(field: string, number: number, i1?: number | string, i2?: number | string): Promise<void> {
+    const aql = `
+      LET maxI = (
+        FOR doc IN ${this.collection}
+        FILTER doc.name == @name && doc.field == @field${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
+        SORT doc.${i1?i2?'i3':'i2':'i1'} DESC
+        LIMIT 1
+        RETURN doc.${i1?i2?'i3':'i2':'i1'}
+      )[0]
+
+      LET newI = maxI + 1
+
+      INSERT {
+        field: @field,
+        number: @number,
+        ${i1?'i1: ${i1}, '+i2?'i2: ${i2}, i3: newI':'i2: newI':'i1: newI'}
+      } INTO ${this.collection}
+
+      RETURN NEW
+    `;
+    await query(aql);
   };
 
   constructor(
