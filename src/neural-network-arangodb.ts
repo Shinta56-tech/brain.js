@@ -4,13 +4,17 @@ import {
   ArangoDBConfig,
   connect,
   query,
+  createCollection,
 } from './utilities/arangodb';
 
 export interface INeuralNetworkOptions {
   inputSize: number;
   outputSize: number;
   binaryThresh: number;
-  hiddenLayers?: number[];
+  hiddenLayers?:
+    | number[]
+    | ((inputSize: number, outputSize: number) => number[])
+    | undefined;
 }
 
 export function defaults(): INeuralNetworkOptions {
@@ -72,96 +76,135 @@ export interface INeuralNetworkOptions {
   inputSize: number;
   outputSize: number;
   binaryThresh: number;
-  hiddenLayers?: number[];
+  hiddenLayers?:
+    | number[]
+    | ((inputSize: number, outputSize: number) => number[])
+    | undefined;
+}
+
+export interface ITrainingStatus {
+  iterations: number;
+  error: number;
+}
+
+export interface INeuralNetworkDatumFormatted<T> {
+  input: T;
+  output: T;
 }
 
 export type INeuralNetworkData = number[] | Float32Array | Partial<INumberHash>;
+
+function randomWeight(): number {
+  return Math.random() * 0.4 - 0.2;
+}
+
+function mse(errors: number[] | INumberHash): number {
+  // mean squared error
+  let sum = 0;
+  if (Array.isArray(errors)) {
+    for (let i = 0; i < errors.length; i++) {
+      sum += errors[i] ** 2;
+    }
+    return sum / errors.length;
+  } else {
+    for (let key in errors) {
+      sum += errors[key] ** 2;
+    }
+    return sum / Object.keys(errors).length;
+  }
+}
 
 export class NeuralNetworkArangoDB<
   InputType extends INeuralNetworkData,
   OutputType extends INeuralNetworkData
 > {
+  //** common properties
   collection: string = 'brainjs_NeuralNetworkArangoDB';
   name: string;
   options: INeuralNetworkOptions = defaults();
   trainOpts: INeuralNetworkTrainOptions = trainDefaults();
+
+  //** neural network properties
   sizes: number[] = [];
   // prettier-ignore
-  async _getQuery(field: string, i1: number | string, i2?: number | string, i3?: number | string): Promise<number> {
+  async _getQuery(field: string, createFunc:(() => number) | undefined, i1: number | string, i2?: number | string, i3?: number | string): Promise<number> {
     const aql = `
-      FOR doc IN ${this.collection}
-      FILTER doc.name == "${this.name}" && doc.field == "${field}" && doc.i1 == ${JSON.stringify(i1)} ${i2?`&& doc.i2 == ${JSON.stringify(i2)}`:''} ${i3?`&& doc.i3 == ${JSON.stringify(i3)}`:''}
+      FOR doc IN \`${this.name}.${field}\`
+      FILTER doc.i1 == ${JSON.stringify(i1)} ${i2!==undefined?`&& doc.i2 == ${JSON.stringify(i2)}`:''} ${i3!==undefined?`&& doc.i3 == ${JSON.stringify(i3)}`:''}
       RETURN doc.number
     `;
     const result: any = await query(aql);
     if (result.length > 0) {
       return result[0] as number;
     } else {
-      return 0;
+      const createAql = `
+      INSERT {
+        i1: ${JSON.stringify(i1)},
+        ${i2!==undefined ? `i2: ${JSON.stringify(i2)},` : ""}
+        ${i3!==undefined ? `i3: ${JSON.stringify(i3)},` : ""}
+        number: ${createFunc?createFunc():0}
+      } INTO \`${this.name}.${field}\`
+      RETURN NEW.number
+    `;
+    const createResult: any = await query(createAql);
+    return createResult[0] as number;
     }
-  };
+  }
   // prettier-ignore
   async _setQuery(field: string, number: number, i1: number | string, i2?: number | string, i3?: number | string): Promise<void> {
     const aql = `
-      UPSERT {name: "${this.name}", field: "${field}", i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
-      INSERT {name: "${this.name}", field: "${field}", number: ${number}, i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
-      UPDATE {name: "${this.name}", field: "${field}", number: ${number}, i1: ${JSON.stringify(i1)}${i2?`, i2: ${JSON.stringify(i2)}`:''}${i3?`, i3: ${JSON.stringify(i3)}`:''}}
-      IN ${this.collection}
+      UPSERT {i1: ${JSON.stringify(i1)}${i2!==undefined?`, i2: ${JSON.stringify(i2)}`:''}${i3!==undefined?`, i3: ${JSON.stringify(i3)}`:''}}
+      INSERT {number: ${number}, i1: ${JSON.stringify(i1)}${i2!==undefined?`, i2: ${JSON.stringify(i2)}`:''}${i3!==undefined?`, i3: ${JSON.stringify(i3)}`:''}}
+      UPDATE {number: ${number}, i1: ${JSON.stringify(i1)}${i2!==undefined?`, i2: ${JSON.stringify(i2)}`:''}${i3!==undefined?`, i3: ${JSON.stringify(i3)}`:''}}
+      IN \`${this.name}.${field}\`
     `;
     await query(aql);
-  };
+  }
   // prettier-ignore
-  async _lengthQuery(field: string, i1?: number | string, i2?: number | string): Promise<number> {
+  async _keysQuery<T extends number | string>(field: string, i1?: number | string, i2?: number | string): Promise<T[]> {
     const aql = `
-      FOR doc IN ${this.collection}
-      FILTER doc.name == "${this.name}" && doc.field == "${field}"${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
-      COLLECT WITH COUNT INTO length
-      RETURN length
+      FOR doc IN \`${this.name}.${field}\`
+      ${i1!==undefined ? `FILTER doc.i1 == ${JSON.stringify(i1)}` : ''}${i2!==undefined ? ` && doc.i2 == ${JSON.stringify(i2)}` : ''}
+      RETURN doc.${i2!==undefined ? 'i3' : i1!==undefined ? 'i2' : 'i1'}
+    `;
+    const result: any = await query(aql);
+    return result as T[];
+  }
+  // prettier-ignore
+  async _parseQuery(field: string, i1: number | string, i2?: number | string): Promise<OutputType> {
+    const aql = `
+      FOR doc IN \`${this.name}.${field}\`
+      ${i1!==undefined ? `FILTER doc.i1 == ${JSON.stringify(i1)}` : ''}${i2!==undefined ? ` && doc.i2 == ${JSON.stringify(i2)}` : ''}
+      RETURN [doc.${i2!==undefined ? 'i3' : i1!==undefined ? 'i2' : 'i1'},doc.number]
     `;
     const result: any = await query(aql);
     if (result.length > 0) {
-      return result[0];
+      if (typeof result[0][0] === "number") {
+        return result.reduce((acc: number[], [key, value]: [number, number]) => {
+          acc[key] = value;
+          return acc;
+        }, []) as number[] as OutputType;
+      } else {
+        return result.reduce((acc: INumberHash, [key, value]: [string, number]) => {
+          acc[key] = value;
+          return acc;
+        }, {}) as INumberHash as OutputType;
+      }
     } else {
-      return 0;
+      return {} as OutputType;
     }
-  };
-  // prettier-ignore
-  async _clearQueryfield(field: string, i1?: number | string, i2?: number | string): Promise<void> {
-    const aql = `
-      FOR doc IN ${this.collection}
-      FILTER doc.name == "${this.name}" && doc.field == "${field}"${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
-      REMOVE doc IN ${this.collection}
-    `;
-    await query(aql);
-  };
-  // prettier-ignore
-  async _pushQuery(field: string, number: number, i1?: number | string, i2?: number | string): Promise<void> {
-    const aql = `
-      LET maxI = (
-        FOR doc IN ${this.collection}
-        FILTER doc.name == @name && doc.field == @field${i1?` && doc.i1 == ${JSON.stringify(i1)}`:''}${i2?` && doc.i2 == ${JSON.stringify(i2)}`:''}
-        SORT doc.${i1?i2?'i3':'i2':'i1'} DESC
-        LIMIT 1
-        RETURN doc.${i1?i2?'i3':'i2':'i1'}
-      )[0]
+  }
 
-      LET newI = maxI + 1
-
-      INSERT {
-        field: @field,
-        number: @number,
-        ${i1?'i1: ${i1}, '+i2?'i2: ${i2}, i3: newI':'i2: newI':'i1: newI'}
-      } INTO ${this.collection}
-
-      RETURN NEW
-    `;
-    await query(aql);
-  };
+  //** neural network properties for training
+  errorCheckInterval = 1;
+  inputSize: number = 0;
+  outputSize: number = 0;
+  outputLayer: number = 0;
 
   constructor(
     options: Partial<INeuralNetworkOptions & INeuralNetworkTrainOptions> = {},
     name?: string,
-    arangoDBConfig?: ArangoDBConfig | undefined,
+    arangoDBConfig?: ArangoDBConfig | undefined
   ) {
     connect(arangoDBConfig);
     this.name = name || 'default';
@@ -169,19 +212,81 @@ export class NeuralNetworkArangoDB<
     this._updateTrainingOptions(options);
     const { inputSize, hiddenLayers, outputSize } = this.options;
     if (inputSize && outputSize) {
-      this.sizes = [inputSize].concat(hiddenLayers ?? []).concat([outputSize]);
+      this.sizes = [inputSize]
+        .concat(Array.isArray(hiddenLayers) ? hiddenLayers ?? [] : [])
+        .concat([outputSize]);
     }
   }
 
-  run(input: Partial<InputType>): OutputType {
-    return {} as OutputType;
+  async train(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>,
+    options: Partial<INeuralNetworkTrainOptions> = {}
+  ): Promise<INeuralNetworkState> {
+    for (let fieldName of [
+      'bias',
+      'weight',
+      'output',
+      'delta',
+      'error',
+      'change',
+    ]) {
+      await createCollection(`${this.name}.${fieldName}`, ['i1', 'i2', 'i3']);
+    }
+    const endTime = Date.now() + this.trainOpts.timeout;
+    const status = {
+      error: 1,
+      iterations: 0,
+    };
+    this._prepTraining(data, options);
+
+    while (true) {
+      if (!(await this._trainingTick(data, status, endTime))) {
+        break;
+      }
+    }
+    return status;
   }
 
-  train(
-    data: Array<INeuralNetworkDatum<Partial<InputType>, Partial<OutputType>>>,
+  async run(input: InputType): Promise<OutputType> {
+    return (await this._runInput(input)) as OutputType;
+  }
+
+  private _prepTraining(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>,
     options: Partial<INeuralNetworkTrainOptions> = {}
-  ): INeuralNetworkState {
-    return {} as INeuralNetworkState;
+  ): void {
+    this._updateTrainingOptions(options);
+    this._verifyIsInitialized(data);
+  }
+
+  private _verifyIsInitialized(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>
+  ): void {
+    this.sizes = [];
+    this.inputSize = data
+      .map((d) => Object.keys(d.input))
+      .reduce((a, b) => Array.from(new Set([...a, ...b])), []).length;
+    this.outputSize = data
+      .map((d) => Object.keys(d.output))
+      .reduce((a, b) => Array.from(new Set([...a, ...b])), []).length;
+    this.sizes.push(this.inputSize);
+    if (!this.options.hiddenLayers) {
+      this.sizes.push(Math.max(3, this.inputSize / 2));
+    } else {
+      if (Array.isArray(this.options.hiddenLayers)) {
+        this.options.hiddenLayers.forEach((size) => {
+          this.sizes.push(size);
+        });
+      } else if (typeof this.options.hiddenLayers === 'function') {
+        this.options
+          .hiddenLayers(this.inputSize, this.outputSize)
+          .forEach((size) => {
+            this.sizes.push(size);
+          });
+      }
+    }
+    this.sizes.push(this.outputSize);
+    this.outputLayer = this.sizes.length - 1;
   }
 
   private _updateTrainingOptions(
@@ -283,5 +388,212 @@ export class NeuralNetworkArangoDB<
     console.log(
       `iterations: ${status.iterations}, training error: ${status.error}`
     );
+  }
+
+  private async _trainingTick(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>,
+    status: INeuralNetworkState,
+    endTime: number
+  ): Promise<boolean> {
+    const {
+      callback,
+      callbackPeriod,
+      errorThresh,
+      iterations,
+      log,
+      logPeriod,
+    } = this.trainOpts;
+
+    if (
+      status.iterations >= iterations ||
+      status.error <= errorThresh ||
+      Date.now() >= endTime
+    ) {
+      return false;
+    }
+
+    status.iterations++;
+
+    if (log && status.iterations % logPeriod === 0) {
+      status.error = await this._calculateTrainingError(data);
+      (log as (state: INeuralNetworkState) => void)(status);
+    } else if (status.iterations % this.errorCheckInterval === 0) {
+      status.error = await this._calculateTrainingError(data);
+    } else {
+      await this._trainPatterns(data);
+    }
+
+    if (callback && status.iterations % callbackPeriod === 0) {
+      callback({
+        iterations: status.iterations,
+        error: status.error,
+      });
+    }
+    return true;
+  }
+
+  private async _calculateTrainingError(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>
+  ): Promise<number> {
+    let sum = 0;
+    for (let i = 0; i < data.length; ++i) {
+      sum += (await this._trainPattern(data[i], true)) as number;
+    }
+    return sum / data.length;
+  }
+
+  private async _trainPatterns(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>
+  ): Promise<void> {
+    for (let i = 0; i < data.length; ++i) {
+      await this._trainPattern(data[i]);
+    }
+  }
+
+  private async _trainPattern(
+    value: INeuralNetworkDatum<InputType, OutputType>,
+    logErrorRate?: boolean
+  ): Promise<number | null> {
+    // forward propagate
+    await this._runInput(value.input, value.output);
+
+    // back propagate
+    await this._calculateDeltas(value.output);
+    await this._adjustWeights();
+
+    if (logErrorRate) {
+      return mse(
+        (await this._parseQuery('error', this.outputLayer)) as INumberHash
+      );
+    }
+    return null;
+  }
+
+  // prettier-ignore
+  private async _runInput(input: InputType, output?: OutputType): Promise<OutputType> {
+    this._setActivation();
+    return await this._runInput(input, output);
+  }
+
+  // prettier-ignore
+  private async _activation(layer: number, node: number | string, sum: number): Promise<void> {
+    this._setActivation();
+    return await this._activation(layer, node, sum);
+  }
+
+  private async _calculateDeltas(output: OutputType): Promise<void> {
+    this._setActivation();
+    return await this._calculateDeltas(output);
+  }
+
+  // prettier-ignore
+  private async _runInputDefault(input: InputType, output?: OutputType): Promise<OutputType> {
+    for (let [key, value] of Object.entries(input)) {
+      await this._setQuery('output', value as number, 0, key);
+    }
+    const activateFunc = async (avtivelayer: number, node: number | string): Promise<void> => {
+      let sum = await this._getQuery('bias', randomWeight, avtivelayer, node);
+        for (let k of (await this._keysQuery('output', avtivelayer - 1))) {
+          sum +=
+            (await this._getQuery('weight', randomWeight, avtivelayer, node, k))
+            * (await this._getQuery('output', ()=>0, avtivelayer - 1, k));
+        }
+        // activation
+        this._activation(avtivelayer, node, sum);
+    };
+    for (let layer = 1; layer <= this.outputLayer - 1; layer++) {
+      for (let node = 0; node < this.sizes[layer]; node++) {
+        await activateFunc(layer, node);
+      }
+    }
+    let outputNodes: string[] = [];
+    if (output) {
+      outputNodes = Object.keys(output);
+    } else {
+      outputNodes = await this._keysQuery('output', this.outputLayer);
+    }
+    for (let node of outputNodes) {
+      await activateFunc(this.outputLayer, node);
+    }
+    let outputObj = await this._parseQuery('output', this.outputLayer);
+    if (!outputObj) {
+      throw new Error('output was empty');
+    }
+    return outputObj;
+  }
+
+  private _setActivation(activation?: NeuralNetworkActivation): void {
+    this._runInput = this._runInputDefault;
+    const value = activation ?? this.trainOpts.activation;
+    switch (value) {
+      case 'sigmoid':
+        this._activation = this._activationSigmoid;
+        this._calculateDeltas = this._calculateDeltasSigmoid;
+        break;
+      default:
+        throw new Error(
+          `Unknown activation ${value}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh'`
+        );
+    }
+  }
+
+  // prettier-ignore
+  private async _activationSigmoid(layer: number, node: number | string, sum: number): Promise<void> {
+    if (typeof node === 'string' && !isNaN(parseInt(node))) {
+      node = parseInt(node);
+    }
+    await this._setQuery('output', 1 / (1 + Math.exp(-sum)), layer, node);
+  }
+
+  // prettier-ignore
+  private async _calculateDeltasSigmoid(target: OutputType): Promise<void> {
+    for (let layer = this.outputLayer; layer >= 0; layer--) {
+      const updateFunc = async (node: number | string): Promise<void> => {
+        let avtiveOutput = await this._getQuery('output', ()=>0, layer, node);
+        let error = 0;
+        if (layer === this.outputLayer) {
+          if ( (target as INumberHash)[node as string] !== undefined) {
+            error = (target as INumberHash)[node as string] - avtiveOutput;
+          } else {
+            error = 0 - avtiveOutput;
+          }
+        } else {
+          for (let k of await this._keysQuery('output', layer + 1)) {
+            error += (await this._getQuery('delta', ()=>0, layer + 1, k)) * (await this._getQuery('weight', randomWeight, layer + 1, k, node));
+          }
+        }
+        await this._setQuery('error', error, layer, node);
+        let delta = error * avtiveOutput * (1 - avtiveOutput);
+        await this._setQuery('delta', delta, layer, node);
+      }
+      if (layer === 0 || layer === this.outputLayer) {
+        for (let node of await this._keysQuery('output', layer)) {
+          await updateFunc(node as string);
+        }
+      } else {
+        for (let node = 0; node < this.sizes[layer]; node++) {
+          await updateFunc(node as number);
+        }
+      }
+    }
+  }
+
+  // prettier-ignore
+  async _adjustWeights(): Promise<void> {
+    const { learningRate, momentum } = this.trainOpts;
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      for (let node of (await this._keysQuery('output', layer))) {
+        let delta = await this._getQuery('delta', ()=>0, layer, node);
+        for (let k of await this._keysQuery('output', layer - 1)) {
+          let change = await this._getQuery('change', ()=>0, layer, node, k);
+          change = learningRate * delta * (await this._getQuery('output', ()=>0, layer - 1, k)) + momentum * change;
+          await this._setQuery('change', change, layer, node, k);
+          let weight = await this._getQuery('weight', randomWeight, layer, node, k);
+          await this._setQuery('weight', weight + change, layer, node, k);
+        }
+        let bias = await this._getQuery('bias', randomWeight, layer, node);
+        await this._setQuery('bias', bias + learningRate * delta, layer, node);
+      }
+    }
   }
 }

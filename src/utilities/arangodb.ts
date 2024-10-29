@@ -11,9 +11,7 @@ export interface ArangoDBConfig {
 }
 
 export interface NeuronSchema {
-  name: string;
-  field: string;
-  num: number;
+  number: number;
   i1: number | string;
   i2?: number | string;
   i3?: number | string;
@@ -43,6 +41,24 @@ export const query = async (aql: string, options?: QueryOptions): Promise<QueryR
   const cursor = await db.query(aql, options);
   const result = await cursor.all();
   return (result as unknown) as QueryResult;
+};
+
+export const createCollection = async (
+  collectionName: string,
+  index_colnames?: string[]
+): Promise<void> => {
+  const collection = db.collection(collectionName);
+  if (await collection.exists()) {
+    return;
+  }
+  await collection.create({ waitForSync: true });
+  if (index_colnames) {
+    await collection.ensureIndex({
+      type: 'hash',
+      fields: index_colnames,
+      unique: true,
+    });
+  }
 };
 
 export { QueryOptions };
