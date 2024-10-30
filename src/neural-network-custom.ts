@@ -12,6 +12,8 @@ import { max } from './utilities/max';
 import { mse } from './utilities/mse';
 import { randos } from './utilities/randos';
 import { zeros } from './utilities/zeros';
+import fs from 'fs';
+import path from 'path';
 
 type NeuralNetworkFormatter =
   | ((v: INumberHash) => Float32Array)
@@ -1294,106 +1296,118 @@ export class NeuralNetworkCustom<
     return this;
   }
 
-  toFunction(
-    cb?: (source: string) => string
-  ): (input: Partial<InputType>) => OutputType {
-    const { activation, leakyReluAlpha } = this.trainOpts;
-    let needsVar = false;
-    const nodeHandle = (layerIndex: number, nodeIndex: number): string => {
-      if (layerIndex === 0) {
-        return `(input[${nodeIndex}]||0)`;
-      }
-
-      const weights: Float32Array = this.weights[layerIndex][nodeIndex];
-      const bias: number = this.biases[layerIndex][nodeIndex];
-      if (!weights) {
-        throw new Error(
-          `weights at layerIndex ${layerIndex} & nodeIndex ${nodeIndex} not found`
-        );
-      }
-      if (!bias) {
-        throw new Error(
-          `bias as layerIndex ${layerIndex} & nodeIndex ${nodeIndex} not found`
-        );
-      }
-      const weightsArray: string[] = [];
-      weights.forEach((weight: number, subNodeIndex: number): void => {
-        if (weight < 0) {
-          weightsArray.push(
-            `${weight}*${nodeHandle(layerIndex - 1, subNodeIndex)}`
-          );
+  /**
+   * Output JSON files using streams.
+   */
+  // prettier-ignore
+  async exportJSON(filePath: string): Promise<void> {
+    console.log('Start export to ' + filePath);
+    const writeStream = fs.createWriteStream(filePath);
+    // 書き込みエラーの処理
+    writeStream.on('error', (err) => {
+      console.error('書き込みエラーが発生しました:', err);
+    });
+    var tab = '\n';
+    // 書き込みを逐次的に行うための関数
+    const writeAsync = (data: any, asyncFlag = true) => {
+      return new Promise<void>((resolve, reject) => {
+        if (asyncFlag) {
+          if (!writeStream.write(data)) {
+            writeStream.once('drain', resolve);
+          } else {
+            resolve();
+          }
         } else {
-          weightsArray.push(
-            `+${weight}*${nodeHandle(layerIndex - 1, subNodeIndex)}`
-          );
+          writeStream.write(data, (err) => {
+            if (err) {
+              reject(err); // エラーがあればリジェクト
+            } else {
+              resolve(); // 書き込み完了時にリゾルブ
+            }
+          });
         }
       });
-      const result = `(${bias.toString()}${weightsArray.join('')})`;
-
-      switch (activation) {
-        case 'sigmoid':
-          return `1/(1+1/Math.exp(${result}))`;
-        case 'relu': {
-          needsVar = true;
-          return `((v=${result})<0?0:v)`;
+    };
+    // 巡回出力
+    const output = async (val: any, typename?: string) => {
+      if (Array.isArray(val) || (typeof val === 'object' && typename === 'Array')) {
+        console.log('Array', val);
+        // Array
+        await writeAsync('[', false);
+        tab += '\t';
+        const len = typename?Object.keys(val).length:val.length;
+        var idx = 0;
+        for (let cval of typename?Object.values(val):val) {
+          await writeAsync(tab);
+          await output(cval, typename);
+          idx++;
+          if (idx < len) {
+            await writeAsync(',');
+          }
         }
-        case 'leaky-relu': {
-          needsVar = true;
-          return `Math.max((v=${result}),${leakyReluAlpha}*v)`;
+        tab = tab.replace(/\t$/, '');
+        await writeAsync(tab + ']', false);
+      } else if (typeof val == 'object') {
+        // Object
+        await writeAsync('{', false);
+        tab += '\t';
+        const entries = Object.entries(val);
+        const len = entries.length;
+        var idx = 0;
+        for (let [ckey, cval] of entries) {
+          idx++;
+          if (cval === undefined) continue;
+          await writeAsync(tab + `"${ckey}": `);
+          await output(cval);
+          if (idx < len) {
+            await writeAsync(',');
+          }
         }
-        case 'tanh':
-          return `Math.tanh(${result})`;
-        default:
-          throw new Error(
-            `Unknown activation ${activation}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh'`
-          );
+        tab = tab.replace(/\t$/, '');
+        await writeAsync(tab + '}', false);
+      } else if (typeof val === 'string') {
+        // String
+        await writeAsync('"' + val + '"');
+      } else {
+        // Primitive
+        await writeAsync('' + (val??'null'));
       }
     };
-
-    function checkKeys(keys: string[]): void {
-      if (keys.find((v) => v.includes('"'))) {
-        throw new Error(`key contains '"', which is not compatible`);
+    await writeAsync('{');
+    tab += '\t';
+    await writeAsync(tab + '"type": "NeuralNetwork",');
+    await writeAsync(tab + '"sizes": '); await output(this.sizes); await writeAsync(',');
+    await writeAsync(tab + '"layers": [');
+    tab += '\t';
+    const outputLength = this.sizes.length - 1;
+    for (let i = 0; i <= outputLength; i++) {
+      await writeAsync(tab + '{');
+      tab += '\t';
+      await writeAsync(tab + '"weights": '); await output(this.weights[i] ?? [], 'Array'); await writeAsync(',');
+      await writeAsync(tab + '"biases": '); await output(this.biases[i] ?? [], 'Array')
+      tab = tab.replace(/\t$/, '');
+      await writeAsync(tab + '}');
+      if (i < outputLength) {
+        await writeAsync(',');
       }
     }
-
-    const layersAsMath: string[] = [];
-    let result: string;
-
-    let inputLookup = '';
-    if (this.inputLookup) {
-      const keys = Object.keys(this.inputLookup);
-      checkKeys(keys);
-      inputLookup = `input = new Float32Array([${Object.keys(this.inputLookup)
-        .map((key) => `input["${key}"]`)
-        .join(',')}]);`;
-    }
-    if (this.sizes.length < 1) throw new Error('No layers');
-    for (
-      let nodeIndex = 0;
-      nodeIndex < this.sizes[this.outputLayer];
-      nodeIndex++
-    ) {
-      layersAsMath.push(nodeHandle(this.outputLayer, nodeIndex));
-    }
-    if (this.outputLookup) {
-      const keys = Object.keys(this.outputLookup);
-      checkKeys(keys);
-      const values = keys
-        .map((key, i) => `"${key}":${layersAsMath[i]}`)
-        .join(',');
-      result = `{${values}}`;
-    } else {
-      result = `[${layersAsMath.join(',')}]`;
-    }
-
-    const source = `${inputLookup}${needsVar ? 'var v;' : ''}return ${result};`;
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval,no-new-func
-    return new Function('input', cb ? cb(source) : source) as (
-      input: Partial<InputType>
-    ) => OutputType;
+    tab = tab.replace(/\t$/, '');
+    await writeAsync(tab + '],');
+    await writeAsync(tab + '"inputLookup": '); await output(this.inputLookup); await writeAsync(',');
+    await writeAsync(tab + '"inputLookupLength": '); await output(this.inputLookupLength); await writeAsync(',');
+    await writeAsync(tab + '"outputLookup": '); await output(this.outputLookup); await writeAsync(',');
+    await writeAsync(tab + '"outputLookupLength": '); await output(this.outputLookupLength); await writeAsync(',');
+    await writeAsync(tab + '"options": '); await output(this.options); await writeAsync(',');
+    await writeAsync(tab + '"trainOpts": '); await output(this.getTrainOptsJSON());
+    tab = tab.replace(/\t$/, '');
+    await writeAsync(tab + '}');
+    writeStream.end();
+    console.log('End export to ' + filePath);
   }
 
-  exportJSON(filepath: string): void {}
-
-  importJSON(filepath: string): void {}
+  async importJSON(filepath: string): Promise<void> {
+    this.fromJSON(
+      (await import(path.resolve(process.cwd(), filepath))).default
+    );
+  }
 }
