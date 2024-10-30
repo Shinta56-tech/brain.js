@@ -22,6 +22,7 @@ test/unit/*.js
 test/e2e/*.js
 **.min.js
 *arangodb*.ts
+*-custom*.ts
 dist/
 __coverage__/
 index.d.ts
