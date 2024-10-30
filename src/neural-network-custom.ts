@@ -163,8 +163,9 @@ export class NeuralNetworkCustom<
   outputs: Float32Array[] = [];
   // state for training
   deltas: Float32Array[] = [];
-  changes: Float32Array[][] = []; // for momentum
-  errors: Float32Array[] = [];
+  changes: Float32Array[][] = [];
+  mse_sum = 0;
+  mse_length = 0;
 
   errorCheckInterval = 1;
 
@@ -207,6 +208,45 @@ export class NeuralNetworkCustom<
     }
   }
 
+  private initExtend(): void {
+    function margeExtendArray(o: Float32Array, n: Float32Array): Float32Array {
+      if (o.length < n.length) {
+        const extendedArray = new Float32Array(n.length);
+        extendedArray.set(o);
+        extendedArray.set(n.slice(o.length), o.length);
+        return extendedArray;
+      } else {
+        return o;
+      }
+    }
+    function margeExtendArrayArray(
+      o: Float32Array[],
+      n: any[]
+    ): Float32Array[] {
+      if (o.length < n.length) {
+        return o.concat(n.slice(o.length));
+      } else {
+        return o;
+      }
+    }
+    // prettier-ignore
+    for (let layerIndex = 0; layerIndex <= this.outputLayer; layerIndex++) {
+      const size = this.sizes[layerIndex];
+      this.deltas[layerIndex] = margeExtendArray(this.deltas[layerIndex], zeros(size));
+      this.outputs[layerIndex] = zeros(size);
+      if (layerIndex > 0) {
+        this.biases[layerIndex] = margeExtendArray(this.biases[layerIndex], randos(size));
+        this.weights[layerIndex] = margeExtendArrayArray(this.weights[layerIndex], new Array(size));
+        this.changes[layerIndex] = margeExtendArrayArray(this.changes[layerIndex], new Array(size));
+        for (let nodeIndex = 0; nodeIndex < size; nodeIndex++) {
+          const prevSize = this.sizes[layerIndex - 1];
+          this.weights[layerIndex][nodeIndex] = margeExtendArray(this.weights[layerIndex][nodeIndex], randos(prevSize));
+          this.changes[layerIndex][nodeIndex] = margeExtendArray(this.changes[layerIndex][nodeIndex], zeros(size));
+        }
+      }
+    }
+  }
+
   /**
    *
    * Expects this.sizes to have been set
@@ -214,6 +254,11 @@ export class NeuralNetworkCustom<
   initialize(): void {
     if (!this.sizes.length) {
       throw new Error('Sizes must be set before initializing');
+    }
+
+    if (this.outputLayer > 0 && this.sizes.length - 1 === this.outputLayer) {
+      this.initExtend();
+      return;
     }
 
     this.outputLayer = this.sizes.length - 1;
@@ -224,12 +269,10 @@ export class NeuralNetworkCustom<
     // state for training
     this.deltas = new Array(this.outputLayer);
     this.changes = new Array(this.outputLayer); // for momentum
-    this.errors = new Array(this.outputLayer);
 
     for (let layerIndex = 0; layerIndex <= this.outputLayer; layerIndex++) {
       const size = this.sizes[layerIndex];
       this.deltas[layerIndex] = zeros(size);
-      this.errors[layerIndex] = zeros(size);
       this.outputs[layerIndex] = zeros(size);
 
       if (layerIndex > 0) {
@@ -422,7 +465,7 @@ export class NeuralNetworkCustom<
   verifyIsInitialized(
     preparedData: Array<INeuralNetworkDatumFormatted<Float32Array>>
   ): void {
-    if (this.sizes.length && this.outputLayer > 0) return;
+    //if (this.sizes.length && this.outputLayer > 0) return;
 
     this.sizes = [];
     this.sizes.push(preparedData[0].input.length);
@@ -716,7 +759,11 @@ export class NeuralNetworkCustom<
     this.adjustWeights();
 
     if (logErrorRate) {
-      return mse(this.errors[this.outputLayer]);
+      const mse = this.mse_sum / this.mse_length;
+      this.mse_sum = 0;
+      this.mse_length = 0;
+      return mse;
+      //return mse(this.errors[this.outputLayer]);
     }
     return null;
   }
@@ -725,7 +772,6 @@ export class NeuralNetworkCustom<
     for (let layer = this.outputLayer; layer >= 0; layer--) {
       const activeSize = this.sizes[layer];
       const activeOutput = this.outputs[layer];
-      const activeError = this.errors[layer];
       const activeDeltas = this.deltas[layer];
       const nextLayer = this.weights[layer + 1];
 
@@ -741,7 +787,10 @@ export class NeuralNetworkCustom<
             error += deltas[k] * nextLayer[k][node];
           }
         }
-        activeError[node] = error;
+        if (layer === this.outputLayer) {
+          this.mse_sum = error ** 2;
+          this.mse_length++;
+        }
         activeDeltas[node] = error * output * (1 - output);
       }
     }
@@ -753,7 +802,6 @@ export class NeuralNetworkCustom<
       const currentOutputs = this.outputs[layer];
       const nextWeights = this.weights[layer + 1];
       const nextDeltas = this.deltas[layer + 1];
-      const currentErrors = this.errors[layer];
       const currentDeltas = this.deltas[layer];
 
       for (let node = 0; node < currentSize; node++) {
@@ -767,7 +815,10 @@ export class NeuralNetworkCustom<
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        if (layer === this.outputLayer) {
+          this.mse_sum = error ** 2;
+          this.mse_length++;
+        }
         currentDeltas[node] = output > 0 ? error : 0;
       }
     }
@@ -780,7 +831,6 @@ export class NeuralNetworkCustom<
       const currentOutputs = this.outputs[layer];
       const nextDeltas = this.deltas[layer + 1];
       const nextWeights = this.weights[layer + 1];
-      const currentErrors = this.errors[layer];
       const currentDeltas = this.deltas[layer];
 
       for (let node = 0; node < currentSize; node++) {
@@ -794,7 +844,10 @@ export class NeuralNetworkCustom<
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        if (layer === this.outputLayer) {
+          this.mse_sum = error ** 2;
+          this.mse_length++;
+        }
         currentDeltas[node] = output > 0 ? error : alpha * error;
       }
     }
@@ -806,7 +859,6 @@ export class NeuralNetworkCustom<
       const currentOutputs = this.outputs[layer];
       const nextDeltas = this.deltas[layer + 1];
       const nextWeights = this.weights[layer + 1];
-      const currentErrors = this.errors[layer];
       const currentDeltas = this.deltas[layer];
 
       for (let node = 0; node < currentSize; node++) {
@@ -820,7 +872,10 @@ export class NeuralNetworkCustom<
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        if (layer === this.outputLayer) {
+          this.mse_sum = error ** 2;
+          this.mse_length++;
+        }
         currentDeltas[node] = (1 - output * output) * error;
       }
     }
@@ -974,22 +1029,34 @@ export class NeuralNetworkCustom<
   formatData(
     data: Array<INeuralNetworkDatum<InputType, OutputType>>
   ): Array<INeuralNetworkDatumFormatted<Float32Array>> {
+    function extendNumberHash(o: INumberHash, n: INumberHash): INumberHash {
+      let length = Object.keys(o).length;
+      for (const p in n) {
+        if (!o.hasOwnProperty(p)) {
+          o[p] = length++;
+        }
+      }
+      return o;
+    }
+
     if (!Array.isArray(data[0].input)) {
-      if (this.inputLookup) {
-        this.inputLookupLength = Object.keys(this.inputLookup).length;
-      } else {
-        const inputLookup = new LookupTable(data, 'input');
-        this.inputLookup = inputLookup.table;
+      const inputLookup = new LookupTable(data, 'input');
+      if (this.inputLookupLength < inputLookup.length) {
+        this.inputLookup = extendNumberHash(
+          this.inputLookup as INumberHash,
+          inputLookup.table
+        );
         this.inputLookupLength = inputLookup.length;
       }
     }
 
     if (!Array.isArray(data[0].output)) {
-      if (this.outputLookup) {
-        this.outputLookupLength = Object.keys(this.outputLookup).length;
-      } else {
-        const lookup = new LookupTable(data, 'output');
-        this.outputLookup = lookup.table;
+      const lookup = new LookupTable(data, 'output');
+      if (this.outputLookupLength < lookup.length) {
+        this.outputLookup = extendNumberHash(
+          this.outputLookup as INumberHash,
+          lookup.table
+        );
         this.outputLookupLength = lookup.length;
       }
     }
@@ -1327,5 +1394,13 @@ export class NeuralNetworkCustom<
     return new Function('input', cb ? cb(source) : source) as (
       input: Partial<InputType>
     ) => OutputType;
+  }
+
+  exportJSON(filepath:string): void {
+    
+  }
+
+  importJSON(filepath:string): void {
+    
   }
 }
