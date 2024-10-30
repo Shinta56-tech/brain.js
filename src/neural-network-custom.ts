@@ -210,6 +210,9 @@ export class NeuralNetworkCustom<
 
   private initExtend(): void {
     function margeExtendArray(o: Float32Array, n: Float32Array): Float32Array {
+      if (!o) {
+        return n;
+      }
       if (o.length < n.length) {
         const extendedArray = new Float32Array(n.length);
         extendedArray.set(o);
@@ -223,6 +226,9 @@ export class NeuralNetworkCustom<
       o: Float32Array[],
       n: any[]
     ): Float32Array[] {
+      if (!o) {
+        return n;
+      }
       if (o.length < n.length) {
         return o.concat(n.slice(o.length));
       } else {
@@ -241,7 +247,7 @@ export class NeuralNetworkCustom<
         for (let nodeIndex = 0; nodeIndex < size; nodeIndex++) {
           const prevSize = this.sizes[layerIndex - 1];
           this.weights[layerIndex][nodeIndex] = margeExtendArray(this.weights[layerIndex][nodeIndex], randos(prevSize));
-          this.changes[layerIndex][nodeIndex] = margeExtendArray(this.changes[layerIndex][nodeIndex], zeros(size));
+          this.changes[layerIndex][nodeIndex] = margeExtendArray(this.changes[layerIndex][nodeIndex], zeros(prevSize));
         }
       }
     }
@@ -468,17 +474,15 @@ export class NeuralNetworkCustom<
     //if (this.sizes.length && this.outputLayer > 0) return;
 
     this.sizes = [];
-    this.sizes.push(preparedData[0].input.length);
+    this.sizes.push(this.inputLookupLength);
     if (!this.options.hiddenLayers) {
-      this.sizes.push(
-        Math.max(3, Math.floor(preparedData[0].input.length / 2))
-      );
+      this.sizes.push(Math.max(3, Math.floor(this.inputLookupLength / 2)));
     } else {
       this.options.hiddenLayers.forEach((size) => {
         this.sizes.push(size);
       });
     }
-    this.sizes.push(preparedData[0].output.length);
+    this.sizes.push(this.outputLookupLength);
 
     this.initialize();
   }
@@ -697,7 +701,7 @@ export class NeuralNetworkCustom<
     };
 
     this.verifyIsInitialized(preparedData);
-    this.validateData(preparedData);
+    //this.validateData(preparedData);
     return {
       preparedData,
       status,
@@ -1030,6 +1034,9 @@ export class NeuralNetworkCustom<
     data: Array<INeuralNetworkDatum<InputType, OutputType>>
   ): Array<INeuralNetworkDatumFormatted<Float32Array>> {
     function extendNumberHash(o: INumberHash, n: INumberHash): INumberHash {
+      if (!o) {
+        return n;
+      }
       let length = Object.keys(o).length;
       for (const p in n) {
         if (!o.hasOwnProperty(p)) {
@@ -1041,33 +1048,23 @@ export class NeuralNetworkCustom<
 
     if (!Array.isArray(data[0].input)) {
       const inputLookup = new LookupTable(data, 'input');
-      if (this.inputLookupLength < inputLookup.length) {
-        this.inputLookup = extendNumberHash(
-          this.inputLookup as INumberHash,
-          inputLookup.table
-        );
-        this.inputLookupLength = inputLookup.length;
-      }
+      this.inputLookup = extendNumberHash(
+        this.inputLookup as INumberHash,
+        inputLookup.table
+      );
+      this.inputLookupLength = Object.keys(this.inputLookup).length;
     }
 
     if (!Array.isArray(data[0].output)) {
       const lookup = new LookupTable(data, 'output');
-      if (this.outputLookupLength < lookup.length) {
-        this.outputLookup = extendNumberHash(
-          this.outputLookup as INumberHash,
-          lookup.table
-        );
-        this.outputLookupLength = lookup.length;
-      }
+      this.outputLookup = extendNumberHash(
+        this.outputLookup as INumberHash,
+        lookup.table
+      );
+      this.outputLookupLength = Object.keys(this.outputLookup).length;
     }
-
-    if (!this._formatInput) {
-      this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
-    }
-
-    if (!this._formatOutput) {
-      this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
-    }
+    this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
+    this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
 
     // turn sparse hash input into arrays with 0s as filler
     if (this._formatInput && this._formatOutput) {
@@ -1396,11 +1393,7 @@ export class NeuralNetworkCustom<
     ) => OutputType;
   }
 
-  exportJSON(filepath:string): void {
-    
-  }
+  exportJSON(filepath: string): void {}
 
-  importJSON(filepath:string): void {
-    
-  }
+  importJSON(filepath: string): void {}
 }
