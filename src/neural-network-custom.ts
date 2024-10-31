@@ -794,7 +794,7 @@ export class NeuralNetworkCustom<
           }
         }
         if (layer === this.outputLayer) {
-          this.mse_sum = error ** 2;
+          this.mse_sum += error ** 2;
           this.mse_length++;
         }
         activeDeltas[node] = error * output * (1 - output);
@@ -822,7 +822,7 @@ export class NeuralNetworkCustom<
           }
         }
         if (layer === this.outputLayer) {
-          this.mse_sum = error ** 2;
+          this.mse_sum += error ** 2;
           this.mse_length++;
         }
         currentDeltas[node] = output > 0 ? error : 0;
@@ -851,7 +851,7 @@ export class NeuralNetworkCustom<
           }
         }
         if (layer === this.outputLayer) {
-          this.mse_sum = error ** 2;
+          this.mse_sum += error ** 2;
           this.mse_length++;
         }
         currentDeltas[node] = output > 0 ? error : alpha * error;
@@ -879,7 +879,7 @@ export class NeuralNetworkCustom<
           }
         }
         if (layer === this.outputLayer) {
-          this.mse_sum = error ** 2;
+          this.mse_sum += error ** 2;
           this.mse_length++;
         }
         currentDeltas[node] = (1 - output * output) * error;
