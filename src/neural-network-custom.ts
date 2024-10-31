@@ -1331,7 +1331,6 @@ export class NeuralNetworkCustom<
     // 巡回出力
     const output = async (val: any, typename?: string) => {
       if (Array.isArray(val) || (typeof val === 'object' && typename === 'Array')) {
-        console.log('Array', val);
         // Array
         await writeAsync('[', false);
         tab += '\t';
