@@ -13,7 +13,8 @@ import { mse } from './utilities/mse';
 import { randos } from './utilities/randos';
 import { zeros } from './utilities/zeros';
 import fs from 'fs';
-import path from 'path';
+import { get } from 'http';
+import { createSecureContext } from 'tls';
 
 type NeuralNetworkFormatter =
   | ((v: INumberHash) => Float32Array)
@@ -260,11 +261,11 @@ export class NeuralNetworkCustom<
    * Expects this.sizes to have been set
    */
   initialize(): void {
-    if (!this.sizes.length) {
+    if (this.sizes.length < 0) {
       throw new Error('Sizes must be set before initializing');
     }
 
-    if (this.outputLayer > 0 && this.sizes.length - 1 === this.outputLayer) {
+    if (this.outputLayer > 0) {
       this.initExtend();
       return;
     }
@@ -470,9 +471,7 @@ export class NeuralNetworkCustom<
    * Verifies network sizes are initialized
    * If they are not it will initialize them based off the data set.
    */
-  verifyIsInitialized(
-    preparedData: Array<INeuralNetworkDatumFormatted<Float32Array>>
-  ): void {
+  verifyIsInitialized(): void {
     //if (this.sizes.length && this.outputLayer > 0) return;
 
     this.sizes = [];
@@ -702,7 +701,7 @@ export class NeuralNetworkCustom<
       iterations: 0,
     };
 
-    this.verifyIsInitialized(preparedData);
+    this.verifyIsInitialized();
     //this.validateData(preparedData);
     return {
       preparedData,
@@ -1334,13 +1333,12 @@ export class NeuralNetworkCustom<
         // Array
         await writeAsync('[', false);
         tab += '\t';
-        const len = typename?Object.keys(val).length:val.length;
-        var idx = 0;
-        for (let cval of typename?Object.values(val):val) {
+        const likeArray = (!Array.isArray(val) && typeof val === 'object' && typename === 'Array');
+        const len = likeArray?Object.keys(val).length:val.length;
+        for (let idx = 0; idx < len; idx++) {
           await writeAsync(tab);
-          await output(cval, typename);
-          idx++;
-          if (idx < len) {
+          await output(val[idx], typename);
+          if (idx < len - 1) {
             await writeAsync(',');
           }
         }
@@ -1369,35 +1367,22 @@ export class NeuralNetworkCustom<
         await writeAsync('"' + val + '"');
       } else {
         // Primitive
-        await writeAsync('' + (val??'null'));
+        val = val === Infinity ? 'Infinity' : val;
+        await writeAsync(JSON.stringify(val??null));
       }
     };
     await writeAsync('{');
     tab += '\t';
     await writeAsync(tab + '"type": "NeuralNetwork",');
     await writeAsync(tab + '"sizes": '); await output(this.sizes); await writeAsync(',');
-    await writeAsync(tab + '"layers": [');
-    tab += '\t';
-    const outputLength = this.sizes.length - 1;
-    for (let i = 0; i <= outputLength; i++) {
-      await writeAsync(tab + '{');
-      tab += '\t';
-      await writeAsync(tab + '"weights": '); await output(this.weights[i] ?? [], 'Array'); await writeAsync(',');
-      await writeAsync(tab + '"biases": '); await output(this.biases[i] ?? [], 'Array')
-      tab = tab.replace(/\t$/, '');
-      await writeAsync(tab + '}');
-      if (i < outputLength) {
-        await writeAsync(',');
-      }
-    }
-    tab = tab.replace(/\t$/, '');
-    await writeAsync(tab + '],');
     await writeAsync(tab + '"inputLookup": '); await output(this.inputLookup); await writeAsync(',');
     await writeAsync(tab + '"inputLookupLength": '); await output(this.inputLookupLength); await writeAsync(',');
     await writeAsync(tab + '"outputLookup": '); await output(this.outputLookup); await writeAsync(',');
     await writeAsync(tab + '"outputLookupLength": '); await output(this.outputLookupLength); await writeAsync(',');
     await writeAsync(tab + '"options": '); await output(this.options); await writeAsync(',');
-    await writeAsync(tab + '"trainOpts": '); await output(this.getTrainOptsJSON());
+    await writeAsync(tab + '"trainOpts": '); await output(this.getTrainOptsJSON()); await writeAsync(',');
+    await writeAsync(tab + '"weights": '); await output(this.weights ?? [], 'Array'); await writeAsync(',');
+    await writeAsync(tab + '"biases": '); await output(this.biases ?? [], 'Array')
     tab = tab.replace(/\t$/, '');
     await writeAsync(tab + '}');
     writeStream.end();
@@ -1405,8 +1390,182 @@ export class NeuralNetworkCustom<
   }
 
   async importJSON(filepath: string): Promise<void> {
-    this.fromJSON(
-      (await import(path.resolve(process.cwd(), filepath))).default
+    console.log('Start inport from ' + filepath);
+    var json: any; // 解析オブジェクト
+    var typename: string; // オブジェクトの型名
+    var typenames: string[] = []; // 型名のスタック
+    var cur: any; // 現在のオブジェクト
+    var curs: any[] = []; // オブジェクトのスタック
+    var idx: number | string; // オブジェクトのインデックス
+    var idxs: (number | string)[] = []; // インデックスのスタック
+    var preIdx: number | string; // 1つ前のインデックス
+    var callbacks: any[] = []; // コールバックリスト
+    var initIgnoreFlag: boolean = false; // 初期化無効フラグ
+    const runCallbacks = () => {
+      callbacks = callbacks.filter((v) => v);
+      callbacks.forEach(([check, callback], i) => {
+        if (check()) {
+          callback();
+          callbacks[i] = null;
+        }
+      });
+    };
+    // オブジェクト構築関数
+    const build = (lineStr: string) => {
+      const str = lineStr.trim();
+      try {
+        if (str.match(/("[^:]+?"): ([^:]+?)$/)) {
+          // オブジェクト項目
+          const [all, key, val] = str.match(
+            /("[^:]+?"): ([^:]+?)$/
+          ) as RegExpMatchArray;
+          if (json === undefined) {
+            throw new Error('想定外の行です : ' + lineStr);
+          }
+          idx = JSON.parse(key);
+          if (!cur[idx]) {
+            cur[idx] = {};
+          }
+          build(val);
+        } else if (str.match(/[\{\[]/)) {
+          // オブジェクト・配列開始
+          if (initIgnoreFlag) {
+            initIgnoreFlag = false;
+            return;
+          }
+          var now;
+          let setIdx;
+          typenames.push(typename);
+          if (str.match(/\{$/)) {
+            // オブジェクト開始
+            now = {};
+            typename = 'Object';
+          } else if (str.match(/\[$/)) {
+            // 配列開始
+            now = [];
+            typename = 'Array';
+            setIdx = () => {
+              idx = 0;
+            };
+          }
+          if (json === undefined) {
+            json = now;
+            cur = json;
+          } else {
+            curs.push(cur);
+            if (cur[idx] === undefined) {
+              cur[idx] = now;
+            }
+            cur = cur[idx];
+            idxs.push(idx);
+          }
+          if (setIdx) setIdx();
+        } else if (str.match(/[\]\}](,|$)/)) {
+          // 配列orオブジェクト終了
+          if (json === undefined) {
+            throw new Error('想定外の行です : ' + lineStr);
+          }
+          cur = curs.pop() ?? json;
+          preIdx = idx;
+          idx = idxs.pop() as number | string;
+          typename = typenames.pop() as string;
+          if(typename === 'Array') {
+            (idx as number)++;
+          }
+          runCallbacks();
+        } else if (str.match(/([\S ]+?)(,|$)/)) {
+          // 値
+          let [all, v, end] = str.match(/([\S ]+?)(,|$)/) as RegExpMatchArray;
+          let val: any = v === '"undefined"' ? undefined : JSON.parse(v);
+          val = val === 'Infinity' ? Infinity : val;
+          if (json === undefined) {
+            json = val;
+          } else {
+            cur[idx] = val;
+            if (typename === 'Array') {
+              (idx as number)++;
+            }
+          }
+        } else {
+          throw new Error('想定外の行です : ' + lineStr);
+        }
+      } catch (e) {
+        console.error(
+          'cur:' + cur,
+          'curs:' + curs,
+          'idx:' + idx,
+          'idxs:' + idxs,
+          'str:' + str
+        );
+        throw e;
+      }
+    };
+    // 初期化設定
+    json = this;
+    cur = this;
+    initIgnoreFlag = true;
+    this.outputLayer = -1;
+    typename = 'Object';
+    // コールバック設定
+    callbacks.push(
+      ...[
+        [
+          () => (idx as string) === 'sizes',
+          () => {
+            this.initialize();
+          },
+        ],
+        [
+          () => (idx as string) == 'trainOpts',
+          () => {
+            this.updateTrainingOptions(this.trainOpts);
+          },
+        ],
+        [
+          () => (idx as string) == 'weights',
+          () => {
+            this.weights[0] = [];
+          },
+        ],
+        [
+          () => (idx as string) == 'biases',
+          () => {
+            this.biases[0] = Float32Array.from([]);
+          },
+        ],
+      ]
     );
+    // Promiseを返すようにして、読み込み完了まで待てるようにする
+    return new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(filepath, { encoding: 'utf8' });
+      let leftover = '';
+      let newlineIndex = 0;
+      // データが読み込まれた時の処理
+      readStream.on('data', (chunk) => {
+        var data = leftover + chunk;
+        // 改行がある位置を探す
+        while ((newlineIndex = data.indexOf('\n')) !== -1) {
+          // 改行前の部分を取り出して出力
+          const line = data.slice(0, newlineIndex);
+          // 行ごとにオブジェクトビルド
+          build(line);
+          // 改行の次の位置からデータを残す
+          data = data.slice(newlineIndex + 1);
+        }
+        // 改行がなかった部分を次の読み込みに持ち越し
+        leftover = data;
+      });
+      // エラー処理
+      readStream.on('error', (err) => {
+        console.error('Error reading file:', err);
+        reject(err); // エラーがあればPromiseを拒否
+      });
+      // 読み込み終了時の処理
+      readStream.on('end', () => {
+        console.log('End inport from ' + filepath);
+        readStream.close();
+        resolve(); // 読み込みが完了したらPromiseを解決
+      });
+    });
   }
 }

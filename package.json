@@ -6,7 +6,6 @@
   },
   "description": "Neural networks in JavaScript",
   "dependencies": {
-    "arangojs": "^9.1.0",
     "thaw.js": "^2.1.4"
   },
   "peerDependencies": {

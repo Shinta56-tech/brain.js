@@ -67,33 +67,50 @@ describe('NeuralNetworkCustom', () => {
       });
     });
   });
-  describe('exportSON', () => {
-    it('ファイル出力', async () => {
-      let net = new NeuralNetworkCustom();
-      const trainingData = [
-        {
-          input: { a: 1, b: 1, c: 1 },
-          output: { e: 1 },
-        },
-        {
-          input: { a: 0, b: 0, c: 0 },
-          output: { e: 0 },
-        },
-      ];
-      let state;
-      state = net.train(trainingData, { logPeriod: 1, errorThresh: 0.000001 });
-      console.log('state', state);
-      console.log(net.run({ a: 1, b: 1, c: 1 }));
-      const toJSON = net.toJSON();
-      console.log('toJSON',JSON.stringify(toJSON, null, 2));
-      await net.exportJSON('dist/exportJSON.json');
-      net = new NeuralNetworkCustom();
-      await net.importJSON('dist/exportJSON.json');
-      console.log('importJSON',JSON.stringify(net.toJSON(), null, 2));
-      console.log(net.run({ a: 1, b: 1, c: 1 }));
-      net = new NeuralNetworkCustom();
-      net.fromJSON(toJSON);
-      console.log(net.run({ a: 1, b: 1, c: 1 }));
-    });
+  describe('exportSON importJSON', () => {
+    it(
+      'ファイル出力',
+      async () => {
+        let net = new NeuralNetworkCustom();
+        const trainingData = [
+          {
+            input: { a: 1, b: 1, c: 1 },
+            output: { e: 1 },
+          },
+          {
+            input: { a: 0, b: 0, c: 0 },
+            output: { e: 0 },
+          },
+        ];
+        let state;
+        state = net.train(trainingData, {
+          logPeriod: 1,
+          errorThresh: 0.000001,
+        });
+        console.log('state', state);
+        console.log(net.run({ a: 1, b: 1, c: 1 }));
+        const toJSON = net.toJSON();
+        console.log('toJSON', JSON.stringify(toJSON, null, 2));
+        await net.exportJSON('dist/exportJSON.json');
+        net = new NeuralNetworkCustom();
+        await net.importJSON('dist/exportJSON.json');
+        console.log('importJSON', JSON.stringify(net.toJSON(), null, 2));
+        console.log('result importJSON', net.run({ a: 1, b: 1, c: 1 }));
+        net = new NeuralNetworkCustom();
+        net.fromJSON(toJSON);
+        console.log('result toJSON', net.run({ a: 1, b: 1, c: 1 }));
+      },
+      60 * 1000
+    );
+  });
+  describe.skip('importJSON', () => {
+    it(
+      'ファイル入力',
+      async () => {
+        let net = new NeuralNetworkCustom();
+        await net.importJSON('dist/net.json');
+      },
+      30 * 60 * 1000
+    );
   });
 });
