@@ -424,8 +424,10 @@ export class NeuralNetwork<
   ): void {
     if (this.sizes.length && this.outputLayer > 0) return;
 
+    // データの入力と出力のサイズを決定
     this.sizes = [];
     this.sizes.push(preparedData[0].input.length);
+    // 隠れ層のサイズを設定
     if (!this.options.hiddenLayers) {
       this.sizes.push(
         Math.max(3, Math.floor(preparedData[0].input.length / 2))
@@ -437,6 +439,7 @@ export class NeuralNetwork<
     }
     this.sizes.push(preparedData[0].output.length);
 
+    // 重み、バイアス、出力、デルタ、変化、エラーの初期化
     this.initialize();
   }
 
@@ -645,6 +648,7 @@ export class NeuralNetwork<
     options: Partial<INeuralNetworkTrainOptions> = {}
   ): INeuralNetworkPreppedTrainingData<Float32Array> {
     this.updateTrainingOptions(options);
+    // データの整形 [{input: [0, 1], output: [0, 1]}, {input: [1, 0], output: [1, 0]}]
     const preparedData = this.formatData(data);
     const endTime = Date.now() + this.trainOpts.timeout;
 
@@ -971,15 +975,30 @@ export class NeuralNetwork<
     }
   }
 
+  /**
+   * ルックアップテーブルの作成
+   * 　例: {a: 1, b: 2} => {a: 0, b: 1}
+   * 返却データ
+   *  [{input: [0, 1], output: [0, 1]}, {input: [1, 0], output: [1, 0]}]
+   */
   formatData(
     data: Array<INeuralNetworkDatum<InputType, OutputType>>
   ): Array<INeuralNetworkDatumFormatted<Float32Array>> {
     if (!Array.isArray(data[0].input)) {
       if (this.inputLookup) {
+        // 既存のルックアップテーブルがある場合、既存のinputのルックアップテーブルを使用する
+        // TODO: トレーニングごとに新しいデータが追加される場合、既存のルックアップテーブルを使用することができない
         this.inputLookupLength = Object.keys(this.inputLookup).length;
       } else {
+        // 既存のルックアップテーブルがない場合、新しいinputのルックアップテーブルを作成する
+
+        /**
+         * ルックアップテーブルの作成
+         * オブジェクトのキーが配列の何番目にあるかを示す
+         * 例: {a: 1, b: 2} => {a: 0, b: 1}
+         */
         const inputLookup = new LookupTable(data, 'input');
-        this.inputLookup = inputLookup.table;
+        this.inputLookup = inputLookup.table; // ルックアップテーブル {a: 0, b: 1}
         this.inputLookupLength = inputLookup.length;
       }
     }
@@ -994,10 +1013,12 @@ export class NeuralNetwork<
       }
     }
 
+    // inputデータをFloat32Arrayに変換する関数
     if (!this._formatInput) {
       this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
     }
 
+    // outputデータをFloat32Arrayに変換する関数
     if (!this._formatOutput) {
       this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
     }
