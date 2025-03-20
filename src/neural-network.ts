@@ -306,6 +306,36 @@ export class NeuralNetwork<
     return (output as unknown) as OutputType;
   }
 
+  mish(x: number): number {
+    return x * Math.tanh(Math.log1p(Math.exp(x)));
+  }
+
+  _runInputMish(input: Float32Array): Float32Array {
+    this.outputs[0] = input; // set output state of input layer
+    let output = null;
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      const activeSize = this.sizes[layer];
+      const activeWeights = this.weights[layer];
+      const activeBiases = this.biases[layer];
+      const activeOutputs = this.outputs[layer];
+      for (let node = 0; node < activeSize; node++) {
+        const weights = activeWeights[node];
+  
+        let sum = activeBiases[node];
+        for (let k = 0; k < weights.length; k++) {
+          sum += weights[k] * input[k];
+        }
+        // Mish activation
+        activeOutputs[node] = this.mish(sum);
+      }
+      output = input = activeOutputs;
+    }
+    if (!output) {
+      throw new Error('output was empty');
+    }
+    return output;
+  }
+  
   _runInputSigmoid(input: Float32Array): Float32Array {
     this.outputs[0] = input; // set output state of input layer
 
@@ -724,6 +754,40 @@ export class NeuralNetwork<
     }
     return null;
   }
+
+  mishDerivative(x: number): number {
+    const sp = Math.log1p(Math.exp(x)); // softplus: ln(1 + e^x)
+    const tanh_sp = Math.tanh(sp); // tanh(softplus)
+    const sech_sp = 1 / Math.cosh(sp); // sech(softplus)
+    const delta = tanh_sp + x * sech_sp * sech_sp * (1 - tanh_sp * tanh_sp);
+    return delta;
+  }
+  
+  _calculateDeltasMish(target: Float32Array): void {
+    for (let layer = this.outputLayer; layer >= 0; layer--) {
+      const activeSize = this.sizes[layer];
+      const activeOutput = this.outputs[layer];
+      const activeError = this.errors[layer];
+      const activeDeltas = this.deltas[layer];
+      const nextLayer = this.weights[layer + 1];
+  
+      for (let node = 0; node < activeSize; node++) {
+        const output = activeOutput[node];
+  
+        let error = 0;
+        if (layer === this.outputLayer) {
+          error = target[node] - output;
+        } else {
+          const deltas = this.deltas[layer + 1];
+          for (let k = 0; k < deltas.length; k++) {
+            error += deltas[k] * nextLayer[k][node];
+          }
+        }
+        activeError[node] = error;
+        activeDeltas[node] = error * this.mishDerivative(output);
+      }
+    }
+  }  
 
   _calculateDeltasSigmoid(target: Float32Array): void {
     for (let layer = this.outputLayer; layer >= 0; layer--) {
