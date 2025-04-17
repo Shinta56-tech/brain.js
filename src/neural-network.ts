@@ -157,6 +157,7 @@ export class NeuralNetwork<
   options: INeuralNetworkOptions = defaults();
   trainOpts: INeuralNetworkTrainOptions = trainDefaults();
   sizes: number[] = [];
+  preSizes: number[] = [];
   outputLayer = -1;
   biases: Float32Array[] = [];
   weights: Float32Array[][] = []; // weights for bias nodes
@@ -216,6 +217,19 @@ export class NeuralNetwork<
       throw new Error('Sizes must be set before initializing');
     }
 
+    // calculate the increasedSizes of the input and output
+    const increasedSizes = [];
+    {
+      increasedSizes.push(this.sizes[0] - (this.preSizes[0] || 0));
+      for (let i = 1; i < this.sizes.length - 1; i++) {
+        increasedSizes.push(this.sizes[i] - (this.preSizes[i] || 0));
+      }
+      increasedSizes.push(
+        this.sizes[this.sizes.length - 1] -
+          (this.preSizes[this.preSizes.length - 1] || 0)
+      );
+    }
+
     this.outputLayer = this.sizes.length - 1;
     this.biases = new Array(this.outputLayer); // weights for bias nodes
     this.weights = new Array(this.outputLayer);
@@ -227,23 +241,63 @@ export class NeuralNetwork<
     this.errors = new Array(this.outputLayer);
 
     for (let layerIndex = 0; layerIndex <= this.outputLayer; layerIndex++) {
+      const increasedSize = increasedSizes[layerIndex];
+      if (!increasedSize) continue;
+
       const size = this.sizes[layerIndex];
-      this.errors[layerIndex] = zeros(size);
-      this.outputs[layerIndex] = zeros(size);
+      const originalSize = this.preSizes[layerIndex] || 0;
+
+      this.outputs[layerIndex] = new Float32Array([
+        ...(this.outputs[layerIndex] || []),
+        ...zeros(increasedSize),
+      ]);
 
       if (layerIndex > 0) {
-        this.deltas[layerIndex] = zeros(size);
-        this.biases[layerIndex] = randos(size);
-        this.weights[layerIndex] = new Array(size);
-        this.changes[layerIndex] = new Array(size);
+        this.deltas[layerIndex] = new Float32Array([
+          ...(this.deltas[layerIndex] || []),
+          ...zeros(increasedSize),
+        ]);
+        this.biases[layerIndex] = new Float32Array([
+          ...(this.biases[layerIndex] || []),
+          ...randos(increasedSize),
+        ]);
+        this.weights[layerIndex] = [
+          ...(this.weights[layerIndex] || []),
+          ...new Array(increasedSize),
+        ];
+        this.changes[layerIndex] = [
+          ...(this.changes[layerIndex] || []),
+          ...new Array(increasedSize),
+        ];
 
-        for (let nodeIndex = 0; nodeIndex < size; nodeIndex++) {
+        for (let nodeIndex = originalSize; nodeIndex < size; nodeIndex++) {
           const prevSize = this.sizes[layerIndex - 1];
           this.weights[layerIndex][nodeIndex] = randos(prevSize);
           this.changes[layerIndex][nodeIndex] = zeros(prevSize);
         }
       }
+
+      if (layerIndex < this.outputLayer && this.preSizes[layerIndex + 1]) {
+        const nextLayerIndex = layerIndex + 1;
+        const nextOriginalSize = this.preSizes[nextLayerIndex];
+
+        this.weights[nextLayerIndex] = [
+          ...this.weights[nextLayerIndex],
+          ...new Array(nextOriginalSize),
+        ];
+        this.changes[nextLayerIndex] = [
+          ...this.changes[nextLayerIndex],
+          ...new Array(nextOriginalSize),
+        ];
+      }
+
+      if (layerIndex == this.outputLayer) {
+        this.errors[layerIndex] = zeros(size);
+      }
     }
+
+    console.log('update sizes:', this.sizes);
+    this.preSizes = [];
 
     this.setActivation();
     if (this.trainOpts.praxis === 'adam') {
@@ -422,8 +476,8 @@ export class NeuralNetwork<
   verifyIsInitialized(
     preparedData: Array<INeuralNetworkDatumFormatted<Float32Array>>
   ): void {
-    if (this.sizes.length && this.outputLayer > 0) return;
-
+    // if (this.sizes.length && this.outputLayer > 0) return;
+    this.preSizes = this.sizes ?? [];
     this.sizes = [];
     this.sizes.push(preparedData[0].input.length);
     if (!this.options.hiddenLayers) {
