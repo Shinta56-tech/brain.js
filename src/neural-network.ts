@@ -228,11 +228,11 @@ export class NeuralNetwork<
 
     for (let layerIndex = 0; layerIndex <= this.outputLayer; layerIndex++) {
       const size = this.sizes[layerIndex];
-      this.deltas[layerIndex] = zeros(size);
       this.errors[layerIndex] = zeros(size);
       this.outputs[layerIndex] = zeros(size);
 
       if (layerIndex > 0) {
+        this.deltas[layerIndex] = zeros(size);
         this.biases[layerIndex] = randos(size);
         this.weights[layerIndex] = new Array(size);
         this.changes[layerIndex] = new Array(size);
@@ -722,7 +722,7 @@ export class NeuralNetwork<
   }
 
   _calculateDeltasSigmoid(target: Float32Array): void {
-    for (let layer = this.outputLayer; layer >= 0; layer--) {
+    for (let layer = this.outputLayer; layer > 0; layer--) {
       const activeSize = this.sizes[layer];
       const activeOutput = this.outputs[layer];
       const activeError = this.errors[layer];
@@ -734,21 +734,21 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          error = target[node] - output;
+          activeError[node] = error = target[node] - output;
         } else {
           const deltas = this.deltas[layer + 1];
           for (let k = 0; k < deltas.length; k++) {
             error += deltas[k] * nextLayer[k][node];
           }
         }
-        activeError[node] = error;
+        // activeError[node] = error;
         activeDeltas[node] = error * output * (1 - output);
       }
     }
   }
 
   _calculateDeltasRelu(target: Float32Array): void {
-    for (let layer = this.outputLayer; layer >= 0; layer--) {
+    for (let layer = this.outputLayer; layer > 0; layer--) {
       const currentSize = this.sizes[layer];
       const currentOutputs = this.outputs[layer];
       const nextWeights = this.weights[layer + 1];
@@ -761,13 +761,13 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          error = target[node] - output;
+          currentErrors[node] = error = target[node] - output;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        // currentErrors[node] = error;
         currentDeltas[node] = output > 0 ? error : 0;
       }
     }
@@ -775,7 +775,7 @@ export class NeuralNetwork<
 
   _calculateDeltasLeakyRelu(target: Float32Array): void {
     const alpha = this.trainOpts.leakyReluAlpha;
-    for (let layer = this.outputLayer; layer >= 0; layer--) {
+    for (let layer = this.outputLayer; layer > 0; layer--) {
       const currentSize = this.sizes[layer];
       const currentOutputs = this.outputs[layer];
       const nextDeltas = this.deltas[layer + 1];
@@ -788,20 +788,20 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          error = target[node] - output;
+          currentErrors[node] = error = target[node] - output;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        // currentErrors[node] = error;
         currentDeltas[node] = output > 0 ? error : alpha * error;
       }
     }
   }
 
   _calculateDeltasTanh(target: Float32Array): void {
-    for (let layer = this.outputLayer; layer >= 0; layer--) {
+    for (let layer = this.outputLayer; layer > 0; layer--) {
       const currentSize = this.sizes[layer];
       const currentOutputs = this.outputs[layer];
       const nextDeltas = this.deltas[layer + 1];
@@ -814,13 +814,13 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          error = target[node] - output;
+          currentErrors[node] = error = target[node] - output;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
           }
         }
-        currentErrors[node] = error;
+        // currentErrors[node] = error;
         currentDeltas[node] = (1 - output * output) * error;
       }
     }
