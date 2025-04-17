@@ -494,45 +494,54 @@ export class NeuralNetworkGPU<
   };
 
   buildGetChanges(): void {
-    for (let layer = 1; layer <= this.outputLayer; layer++) {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-expect-error
-      this.changesPropagate[layer] = this.gpu.createKernelMap(
-        {
-          weights: addWeights,
-          changes: calcChanges,
-        },
-        function (
-          this: IKernelFunctionThis<{
-            size: number;
-            learningRate: number;
-            momentum: number;
-          }>,
-          previousOutputs: number[],
-          deltas: number[],
-          weights: number[][],
-          previousChanges: number[][]
-        ) {
-          const change = calcChanges(
-            this.constants.learningRate,
-            this.constants.momentum,
-            previousChanges[this.thread.y][this.thread.x],
-            deltas[this.thread.y],
-            previousOutputs[this.thread.x]
-          );
-          return addWeights(change, weights[this.thread.y][this.thread.x]);
-        },
-        {
-          output: [this.sizes[layer - 1], this.sizes[layer]],
-          pipeline: true,
-          constants: {
-            size: this.sizes[layer - 1],
-            learningRate: this.trainOpts.learningRate,
-            momentum: this.trainOpts.momentum,
+    const { praxis } = this.trainOpts;
+    if (praxis === 'adam') {
+      throw new Error('Adam is not yet implemented for GPU');
+      // for (let layer = 1; layer <= this.outputLayer; layer++) {}
+    } else if (praxis === 'adamw') {
+      throw new Error('AdamW is not yet implemented for GPU');
+      // for (let layer = 1; layer <= this.outputLayer; layer++) {}
+    } else {
+      for (let layer = 1; layer <= this.outputLayer; layer++) {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-expect-error
+        this.changesPropagate[layer] = this.gpu.createKernelMap(
+          {
+            weights: addWeights,
+            changes: calcChanges,
           },
-          immutable: true,
-        }
-      );
+          function (
+            this: IKernelFunctionThis<{
+              size: number;
+              learningRate: number;
+              momentum: number;
+            }>,
+            previousOutputs: number[],
+            deltas: number[],
+            weights: number[][],
+            previousChanges: number[][]
+          ) {
+            const change = calcChanges(
+              this.constants.learningRate,
+              this.constants.momentum,
+              previousChanges[this.thread.y][this.thread.x],
+              deltas[this.thread.y],
+              previousOutputs[this.thread.x]
+            );
+            return addWeights(change, weights[this.thread.y][this.thread.x]);
+          },
+          {
+            output: [this.sizes[layer - 1], this.sizes[layer]],
+            pipeline: true,
+            constants: {
+              size: this.sizes[layer - 1],
+              learningRate: this.trainOpts.learningRate,
+              momentum: this.trainOpts.momentum,
+            },
+            immutable: true,
+          }
+        );
+      }
     }
   }
 
