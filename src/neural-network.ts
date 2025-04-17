@@ -89,7 +89,7 @@ export interface INeuralNetworkTrainOptionsJSON {
   momentum: number;
   callbackPeriod: number;
   timeout: number | 'Infinity';
-  praxis?: 'adam';
+  praxis?: 'adam' | 'adamw';
   beta1: number;
   beta2: number;
   epsilon: number;
@@ -113,10 +113,11 @@ export interface INeuralNetworkTrainOptions {
   callback?: (status: { iterations: number; error: number }) => void;
   callbackPeriod: number;
   timeout: number;
-  praxis?: 'adam';
+  praxis?: 'adam' | 'adamw';
   beta1: number;
   beta2: number;
   epsilon: number;
+  weightDecay: number;
 }
 
 export function trainDefaults(): INeuralNetworkTrainOptions {
@@ -134,6 +135,7 @@ export function trainDefaults(): INeuralNetworkTrainOptions {
     beta1: 0.9,
     beta2: 0.999,
     epsilon: 1e-8,
+    weightDecay: 0.0001,
   };
 }
 
@@ -301,7 +303,7 @@ export class NeuralNetwork<
     console.log('update sizes:', this.sizes);
 
     this.setActivation();
-    if (this.trainOpts.praxis === 'adam') {
+    if (['adam', 'adamw'].includes(this.trainOpts.praxis as string)) {
       this._setupAdam();
     }
   }
@@ -551,7 +553,7 @@ export class NeuralNetwork<
       },
       praxis: () => {
         const val = options.praxis;
-        return !val || val === 'adam';
+        return !val || val === 'adam' || val === 'adamw';
       },
       beta1: () => {
         const val = options.beta1;
@@ -564,6 +566,10 @@ export class NeuralNetwork<
       epsilon: () => {
         const val = options.epsilon;
         return val > 0 && val < 1;
+      },
+      weightDecay: () => {
+        const val = options.weightDecay;
+        return val >= 0;
       },
     };
     for (const p in validations) {
@@ -934,7 +940,9 @@ export class NeuralNetwork<
       }
     }
 
-    this.adjustWeights = this._adjustWeightsAdam;
+    const { praxis } = this.trainOpts;
+    if (praxis === 'adam') this.adjustWeights = this._adjustWeightsAdam;
+    else if (praxis === 'adamw') this.adjustWeights = this._adjustWeightsAdamW;
   }
 
   _adjustWeightsAdam(): void {
@@ -972,6 +980,68 @@ export class NeuralNetwork<
 
           currentChangesLow[node][k] = changeLow;
           currentChangesHigh[node][k] = changeHigh;
+          currentWeights[node][k] +=
+            (learningRate * momentumCorrection) /
+            (Math.sqrt(gradientCorrection) + epsilon);
+        }
+
+        const biasGradient = currentDeltas[node];
+        const biasChangeLow =
+          currentBiasChangesLow[node] * beta1 + (1 - beta1) * biasGradient;
+        const biasChangeHigh =
+          currentBiasChangesHigh[node] * beta2 +
+          (1 - beta2) * biasGradient * biasGradient;
+
+        const biasMomentumCorrection =
+          currentBiasChangesLow[node] / (1 - Math.pow(beta1, iterations));
+        const biasGradientCorrection =
+          currentBiasChangesHigh[node] / (1 - Math.pow(beta2, iterations));
+
+        currentBiasChangesLow[node] = biasChangeLow;
+        currentBiasChangesHigh[node] = biasChangeHigh;
+        currentBiases[node] +=
+          (learningRate * biasMomentumCorrection) /
+          (Math.sqrt(biasGradientCorrection) + epsilon);
+      }
+    }
+  }
+
+  _adjustWeightsAdamW(): void {
+    this.iterations++;
+
+    const { iterations } = this;
+    const { beta1, beta2, epsilon, learningRate, weightDecay } = this.trainOpts;
+
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      const incoming = this.outputs[layer - 1];
+      const currentSize = this.sizes[layer];
+      const currentDeltas = this.deltas[layer];
+      const currentChangesLow = this.changesLow[layer];
+      const currentChangesHigh = this.changesHigh[layer];
+      const currentWeights = this.weights[layer];
+      const currentBiases = this.biases[layer];
+      const currentBiasChangesLow = this.biasChangesLow[layer];
+      const currentBiasChangesHigh = this.biasChangesHigh[layer];
+
+      for (let node = 0; node < currentSize; node++) {
+        const delta = currentDeltas[node];
+
+        for (let k = 0; k < incoming.length; k++) {
+          const gradient = delta * incoming[k];
+          const changeLow =
+            currentChangesLow[node][k] * beta1 + (1 - beta1) * gradient;
+          const changeHigh =
+            currentChangesHigh[node][k] * beta2 +
+            (1 - beta2) * gradient * gradient;
+
+          const momentumCorrection =
+            changeLow / (1 - Math.pow(beta1, iterations));
+          const gradientCorrection =
+            changeHigh / (1 - Math.pow(beta2, iterations));
+
+          currentChangesLow[node][k] = changeLow;
+          currentChangesHigh[node][k] = changeHigh;
+          currentWeights[node][k] *= 1 - learningRate * weightDecay;
           currentWeights[node][k] +=
             (learningRate * momentumCorrection) /
             (Math.sqrt(gradientCorrection) + epsilon);

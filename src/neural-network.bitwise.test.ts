@@ -67,7 +67,7 @@ describe('NeuralNetwork bitwise', () => {
       net.train(data, {
         errorThresh: 0.003,
         learningRate: 0.05,
-        praxis: 'adam',
+        praxis: 'adamw',
       });
 
       data.forEach((d) => {
