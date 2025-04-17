@@ -219,26 +219,27 @@ export class NeuralNetwork<
 
     // calculate the increasedSizes of the input and output
     const increasedSizes = [];
-    {
-      increasedSizes.push(this.sizes[0] - (this.preSizes[0] || 0));
-      for (let i = 1; i < this.sizes.length - 1; i++) {
-        increasedSizes.push(this.sizes[i] - (this.preSizes[i] || 0));
-      }
-      increasedSizes.push(
-        this.sizes[this.sizes.length - 1] -
-          (this.preSizes[this.preSizes.length - 1] || 0)
-      );
+    increasedSizes.push(this.sizes[0] - (this.preSizes[0] || 0));
+    for (let i = 1; i < this.sizes.length - 1; i++) {
+      increasedSizes.push(this.sizes[i] - (this.preSizes[i] || 0));
     }
+    increasedSizes.push(
+      this.sizes[this.sizes.length - 1] -
+        (this.preSizes[this.preSizes.length - 1] || 0)
+    );
 
     this.outputLayer = this.sizes.length - 1;
-    this.biases = new Array(this.outputLayer); // weights for bias nodes
-    this.weights = new Array(this.outputLayer);
-    this.outputs = new Array(this.outputLayer);
 
-    // state for training
-    this.deltas = new Array(this.outputLayer);
-    this.changes = new Array(this.outputLayer); // for momentum
-    this.errors = new Array(this.outputLayer);
+    if (!this.biases) {
+      this.biases = new Array(this.outputLayer); // weights for bias nodes
+      this.weights = new Array(this.outputLayer);
+      this.outputs = new Array(this.outputLayer);
+
+      // state for training
+      this.deltas = new Array(this.outputLayer);
+      this.changes = new Array(this.outputLayer); // for momentum
+      this.errors = new Array(this.outputLayer);
+    }
 
     for (let layerIndex = 0; layerIndex <= this.outputLayer; layerIndex++) {
       const increasedSize = increasedSizes[layerIndex];
@@ -279,25 +280,25 @@ export class NeuralNetwork<
 
       if (layerIndex < this.outputLayer && this.preSizes[layerIndex + 1]) {
         const nextLayerIndex = layerIndex + 1;
-        const nextOriginalSize = this.preSizes[nextLayerIndex];
 
-        this.weights[nextLayerIndex] = [
-          ...this.weights[nextLayerIndex],
-          ...new Array(nextOriginalSize),
-        ];
-        this.changes[nextLayerIndex] = [
-          ...this.changes[nextLayerIndex],
-          ...new Array(nextOriginalSize),
-        ];
+        this.weights[nextLayerIndex] = this.weights[nextLayerIndex].map(
+          (node) => {
+            return new Float32Array([...node, ...randos(increasedSize)]);
+          }
+        );
+        this.changes[nextLayerIndex] = this.changes[nextLayerIndex].map(
+          (node) => {
+            return new Float32Array([...node, ...zeros(increasedSize)]);
+          }
+        );
       }
 
-      if (layerIndex == this.outputLayer) {
+      if (layerIndex === this.outputLayer) {
         this.errors[layerIndex] = zeros(size);
       }
     }
 
     console.log('update sizes:', this.sizes);
-    this.preSizes = [];
 
     this.setActivation();
     if (this.trainOpts.praxis === 'adam') {
@@ -998,22 +999,22 @@ export class NeuralNetwork<
   }
 
   validateData(data: Array<INeuralNetworkDatumFormatted<Float32Array>>): void {
-    const inputSize = this.sizes[0];
-    const outputSize = this.sizes[this.sizes.length - 1];
-    const { length } = data;
-    for (let i = 0; i < length; i++) {
-      const { input, output } = data[i];
-      if (input.length !== inputSize) {
-        throw new Error(
-          `input at index ${i} length ${input.length} must be ${inputSize}`
-        );
-      }
-      if (data[i].output.length !== outputSize) {
-        throw new Error(
-          `output at index ${i} length ${output.length} must be ${outputSize}`
-        );
-      }
-    }
+    // const inputSize = this.sizes[0];
+    // const outputSize = this.sizes[this.sizes.length - 1];
+    // const { length } = data;
+    // for (let i = 0; i < length; i++) {
+    //   const { input, output } = data[i];
+    //   if (input.length !== inputSize) {
+    //     throw new Error(
+    //       `input at index ${i} length ${input.length} must be ${inputSize}`
+    //     );
+    //   }
+    //   if (data[i].output.length !== outputSize) {
+    //     throw new Error(
+    //       `output at index ${i} length ${output.length} must be ${outputSize}`
+    //     );
+    //   }
+    // }
   }
 
   validateInput(formattedInput: Float32Array): void {
@@ -1029,32 +1030,52 @@ export class NeuralNetwork<
     data: Array<INeuralNetworkDatum<InputType, OutputType>>
   ): Array<INeuralNetworkDatumFormatted<Float32Array>> {
     if (!Array.isArray(data[0].input)) {
-      if (this.inputLookup) {
-        this.inputLookupLength = Object.keys(this.inputLookup).length;
-      } else {
-        const inputLookup = new LookupTable(data, 'input');
-        this.inputLookup = inputLookup.table;
-        this.inputLookupLength = inputLookup.length;
-      }
+      // if (this.inputLookup) {
+      //   this.inputLookupLength = Object.keys(this.inputLookup).length;
+      // } else {
+      const inputLookup = new LookupTable(
+        [
+          {
+            input: this.inputLookup ?? {},
+            output: {},
+          },
+          ...data,
+        ],
+        'input'
+      );
+      this.inputLookup = inputLookup.table;
+      this.inputLookupLength = inputLookup.length;
+      this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
+      // }
     }
 
     if (!Array.isArray(data[0].output)) {
-      if (this.outputLookup) {
-        this.outputLookupLength = Object.keys(this.outputLookup).length;
-      } else {
-        const lookup = new LookupTable(data, 'output');
-        this.outputLookup = lookup.table;
-        this.outputLookupLength = lookup.length;
-      }
-    }
-
-    if (!this._formatInput) {
-      this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
-    }
-
-    if (!this._formatOutput) {
+      // if (this.outputLookup) {
+      //   this.outputLookupLength = Object.keys(this.outputLookup).length;
+      // } else {
+      const lookup = new LookupTable(
+        [
+          {
+            input: {},
+            output: this.outputLookup ?? {},
+          },
+          ...data,
+        ],
+        'output'
+      );
+      this.outputLookup = lookup.table;
+      this.outputLookupLength = lookup.length;
       this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
+      // }
     }
+
+    // if (!this._formatInput) {
+    //   this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
+    // }
+
+    // if (!this._formatOutput) {
+    //   this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
+    // }
 
     // turn sparse hash input into arrays with 0s as filler
     if (this._formatInput && this._formatOutput) {
