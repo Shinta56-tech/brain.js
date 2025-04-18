@@ -18,8 +18,8 @@ describe('NeuralNetwork.train()', () => {
   describe('train() options', () => {
     it('train', () => {
       const net = new NeuralNetwork();
-      const res = net.train(data, {});
-      const res2 = net.train(data2, {});
+      const res = net.train(data, { activation: 'mish', praxis: 'adamw' });
+      const res2 = net.train(data2, { activation: 'mish', praxis: 'adamw' });
       console.log('res', res);
       console.log('res2', res2);
     });

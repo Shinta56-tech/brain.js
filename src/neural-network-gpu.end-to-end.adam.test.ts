@@ -7,8 +7,8 @@ describe('NeuralNetworkGPU Class: End to End', () => {
     const status = net.train(xorTrainingData, {
       iterations: Infinity,
       errorThresh: 0.01,
-      activation: 'leaky-relu',
-      // praxis: 'adamw',
+      activation: 'mish',
+      praxis: 'adamw',
       log: true,
       logPeriod: 1,
     });

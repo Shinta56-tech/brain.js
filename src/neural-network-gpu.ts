@@ -40,84 +40,93 @@ interface ISizedKernelThis extends IKernelFunctionThis {
   };
 }
 
-function weightedSumSigmoid(
-  this: ISizedKernelThis,
+type WeightedSum = ((
+  this: IKernelFunctionThis<{ size: number }>,
   weights: number[][],
   biases: number[],
   inputs: number[]
-): number {
-  let sum = biases[this.thread.x];
-  for (let k = 0; k < this.constants.size; k++) {
-    sum += weights[this.thread.x][k] * inputs[k];
-  }
+) => IMappedKernelResult) &
+  IKernelMapRunShortcut<{
+    outputs: number[];
+  }>;
+
+function weightedSumSigmoid(sum: number): number {
   // sigmoid
   return 1 / (1 + Math.exp(-sum));
 }
 
-function weightedSumRelu(
-  this: ISizedKernelThis,
-  weights: number[][],
-  biases: number[],
-  inputs: number[]
-): number {
-  let sum = biases[this.thread.x];
-  for (let k = 0; k < this.constants.size; k++) {
-    sum += weights[this.thread.x][k] * inputs[k];
-  }
+function weightedSumRelu(sum: number): number {
   // relu
   return sum < 0 ? 0 : sum;
 }
 
-function weightedSumLeakyRelu(
-  this: ISizedKernelThis,
-  weights: number[][],
-  biases: number[],
-  inputs: number[]
-): number {
-  let sum = biases[this.thread.x];
-  for (let k = 0; k < this.constants.size; k++) {
-    sum += weights[this.thread.x][k] * inputs[k];
-  }
+function weightedSumLeakyRelu(sum: number): number {
   // leaky relu
   return sum < 0 ? 0 : 0.01 * sum;
 }
 
-function weightedSumTanh(
-  this: ISizedKernelThis,
-  weights: number[][],
-  biases: number[],
-  inputs: number[]
-): number {
-  let sum = biases[this.thread.x];
-  for (let k = 0; k < this.constants.size; k++) {
-    sum += weights[this.thread.x][k] * inputs[k];
-  }
+function weightedSumTanh(sum: number): number {
   // tanh
   return Math.tanh(sum);
+}
+
+function weightedSumMish(sum: number): number {
+  // mish
+  return sum * Math.tanh(Math.log(1 + Math.exp(sum)));
 }
 
 function calcErrorOutput(output: number, target: number): number {
   return target - output;
 }
 
-function calcDeltasSigmoid(error: number, output: number): number {
+function calcDeltasSigmoid(
+  error: number,
+  output: number,
+  outputPA: number
+): number {
   // sigmoid derivative
   return error * output * (1 - output);
 }
 
-function calcDeltasRelu(error: number, output: number): number {
+function calcDeltasRelu(
+  error: number,
+  output: number,
+  outputPA: number
+): number {
   // relu derivative
   return output > 0 ? error : 0;
 }
 
-function calcDeltasLeakyRelu(error: number, output: number): number {
+function calcDeltasLeakyRelu(
+  error: number,
+  output: number,
+  outputPA: number
+): number {
   // leaky relu derivative
   return output > 0 ? error : 0.01 * error;
 }
 
-function calcDeltasTanh(error: number, output: number): number {
+function calcDeltasTanh(
+  error: number,
+  output: number,
+  outputPA: number
+): number {
   // tanh derivative
   return (1 - output * output) * error;
+}
+
+function calcDeltasMish(
+  error: number,
+  output: number,
+  outputPA: number
+): number {
+  // mish derivative
+  const softX = Math.max(Math.min(outputPA, 80), -80);
+  const sp = Math.log(1 + Math.exp(softX));
+  const tsp = Math.tanh(sp);
+  const sigx = 1 / (1 + Math.exp(-softX));
+  const back = tsp + softX * sigx * (1 - tsp * tsp);
+  return error * back;
 }
 
 function calcError(
@@ -332,14 +341,16 @@ export interface INeuralNetworkGPUOptions extends INeuralNetworkOptions {
 export type BackPropagateOutput = (
   this: IKernelFunctionThis,
   outputs: KernelOutput,
-  targets: KernelOutput
+  targets: KernelOutput,
+  outputsPA: KernelOutput
 ) => { result: KernelOutput; error: KernelOutput };
 
 export type BackPropagateLayer = (
   this: IKernelFunctionThis,
   weights: KernelOutput,
   outputs: KernelOutput,
-  deltas: KernelOutput
+  deltas: KernelOutput,
+  outputsPA: KernelOutput
 ) => { result: KernelOutput; error: KernelOutput };
 
 export class NeuralNetworkGPU<
@@ -352,13 +363,7 @@ export class NeuralNetworkGPU<
     throw new Error('not yet setup');
   };
 
-  forwardPropagate: Array<
-    (
-      weights: KernelOutput,
-      biases: KernelOutput,
-      inputs: KernelOutput
-    ) => KernelOutput
-  > = [];
+  forwardPropagate: WeightedSum[] = [];
 
   backwardPropagate: Array<BackPropagateOutput | BackPropagateLayer> = [];
 
@@ -383,6 +388,9 @@ export class NeuralNetworkGPU<
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   outputs: KernelOutput[] = [];
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  outputsPreActivation: KernelOutput[] = [];
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   deltas: KernelOutput[] = [];
@@ -470,8 +478,7 @@ export class NeuralNetworkGPU<
   }
 
   buildRunInput(): void {
-    let weightedSum = null;
-
+    let weightedSum: (sum: number) => number;
     switch (this.trainOpts.activation) {
       case 'sigmoid':
         weightedSum = weightedSumSigmoid;
@@ -485,6 +492,9 @@ export class NeuralNetworkGPU<
       case 'tanh':
         weightedSum = weightedSumTanh;
         break;
+      case 'mish':
+        weightedSum = weightedSumMish;
+        break;
       default:
         throw new Error(
           `Unknown activation ${this.trainOpts.activation}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh'`
@@ -492,14 +502,33 @@ export class NeuralNetworkGPU<
     }
 
     for (let layer = 1; layer <= this.outputLayer; layer++) {
-      this.forwardPropagate[layer] = this.gpu.createKernel(weightedSum, {
-        output: [this.sizes[layer]],
-        pipeline: true,
-        constants: {
-          size: this.sizes[layer - 1],
+      this.forwardPropagate[layer] = this.gpu.createKernelMap(
+        {
+          outputs: weightedSum,
         },
-        immutable: true, // false
-      });
+        function (
+          this: ISizedKernelThis,
+          weights: number[][],
+          biases: number[],
+          inputs: number[]
+        ): number {
+          let sum = biases[this.thread.x];
+          for (let k = 0; k < this.constants.size; k++) {
+            sum += weights[this.thread.x][k] * inputs[k];
+          }
+
+          weightedSum(sum);
+          return sum;
+        },
+        {
+          output: [this.sizes[layer]],
+          pipeline: true,
+          constants: {
+            size: this.sizes[layer - 1],
+          },
+          immutable: true, // false
+        }
+      ) as WeightedSum;
     }
 
     this.texturizeInputData = this.gpu.createKernel(
@@ -521,18 +550,19 @@ export class NeuralNetworkGPU<
     this.outputs[0] = input;
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       release(this.outputs[layer]);
-      this.outputs[layer] = this.forwardPropagate[layer](
+      const outputs = this.forwardPropagate[layer](
         this.weights[layer],
         this.biases[layer],
         input
       );
-      output = input = this.outputs[layer];
+      this.outputs[layer] = output = input = outputs.outputs;
+      this.outputsPreActivation[layer] = outputs.result;
     }
     return output;
   };
 
   buildCalculateDeltas(): void {
-    let calcDeltas: GPUFunction<[number, number]>;
+    let calcDeltas: GPUFunction<[number, number, number]>;
     switch (this.trainOpts.activation) {
       case 'sigmoid':
         calcDeltas = calcDeltasSigmoid;
@@ -546,9 +576,12 @@ export class NeuralNetworkGPU<
       case 'tanh':
         calcDeltas = calcDeltasTanh;
         break;
+      case 'mish':
+        calcDeltas = calcDeltasMish;
+        break;
       default:
         throw new Error(
-          `Unknown activation ${this.trainOpts.activation}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh'`
+          `Unknown activation ${this.trainOpts.activation}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh', ''mish'`
         );
     }
 
@@ -568,13 +601,19 @@ export class NeuralNetworkGPU<
           function (
             this: IKernelFunctionThis,
             outputs: number[],
-            targets: number[]
+            targets: number[],
+            outputsPA: number[]
           ): number {
             const output = outputs[this.thread.x];
             const target = targets[this.thread.x];
+            const outputPA = outputsPA[this.thread.x];
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
-            return calcDeltas(calcErrorOutput(output, target), output);
+            return calcDeltas(
+              calcErrorOutput(output, target),
+              output,
+              outputPA
+            );
           },
           {
             output: [this.sizes[this.outputLayer]],
@@ -593,9 +632,11 @@ export class NeuralNetworkGPU<
             this: ISizedKernelThis,
             nextWeights: number[][],
             outputs: number[],
-            nextDeltas: number[]
+            nextDeltas: number[],
+            outputsPA: number[]
           ): number {
             const output = outputs[this.thread.x];
+            const outputPA = outputsPA[this.thread.x];
             // eslint-disable-next-line @typescript-eslint/ban-ts-comment
             // @ts-expect-error
             return calcDeltas(
@@ -605,7 +646,8 @@ export class NeuralNetworkGPU<
                 nextWeights,
                 nextDeltas
               ),
-              output
+              output,
+              outputPA
             );
           },
           {
@@ -630,18 +672,24 @@ export class NeuralNetworkGPU<
       if (layer === this.outputLayer) {
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
-        output = this.backwardPropagate[layer](this.outputs[layer], target);
+        output = this.backwardPropagate[layer](
+          this.outputs[layer],
+          target,
+          this.outputsPreActivation[layer]
+        );
+        this.errors[layer] = output.error;
       } else {
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error
         output = this.backwardPropagate[layer](
           this.weights[layer + 1],
           this.outputs[layer],
-          this.deltas[layer + 1]
+          this.deltas[layer + 1],
+          this.outputsPreActivation[layer]
         );
       }
       this.deltas[layer] = output.result;
-      this.errors[layer] = output.error;
+      // this.errors[layer] = output.error;
     }
   };
 

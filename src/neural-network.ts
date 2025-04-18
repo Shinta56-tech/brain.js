@@ -44,7 +44,8 @@ export type NeuralNetworkActivation =
   | 'sigmoid'
   | 'relu'
   | 'leaky-relu'
-  | 'tanh';
+  | 'tanh'
+  | 'mish';
 
 export interface IJSONLayer {
   biases: number[];
@@ -164,6 +165,7 @@ export class NeuralNetwork<
   biases: Float32Array[] = [];
   weights: Float32Array[][] = []; // weights for bias nodes
   outputs: Float32Array[] = [];
+  outputsPreActivation: Float32Array[] = []; // for mish etc
   // state for training
   deltas: Float32Array[] = [];
   changes: Float32Array[][] = []; // for momentum
@@ -236,6 +238,7 @@ export class NeuralNetwork<
       this.biases = new Array(this.outputLayer); // weights for bias nodes
       this.weights = new Array(this.outputLayer);
       this.outputs = new Array(this.outputLayer);
+      this.outputsPreActivation = new Array(this.outputLayer); // for mish etc
 
       // state for training
       this.deltas = new Array(this.outputLayer);
@@ -252,6 +255,11 @@ export class NeuralNetwork<
 
       this.outputs[layerIndex] = new Float32Array([
         ...(this.outputs[layerIndex] || []),
+        ...zeros(increasedSize),
+      ]);
+
+      this.outputsPreActivation[layerIndex] = new Float32Array([
+        ...(this.outputsPreActivation[layerIndex] || []),
         ...zeros(increasedSize),
       ]);
 
@@ -326,6 +334,10 @@ export class NeuralNetwork<
       case 'tanh':
         this.runInput = this._runInputTanh;
         this.calculateDeltas = this._calculateDeltasTanh;
+        break;
+      case 'mish':
+        this.runInput = this._runInputMish;
+        this.calculateDeltas = this._calculateDeltasMish;
         break;
       default:
         throw new Error(
@@ -471,6 +483,37 @@ export class NeuralNetwork<
     return output;
   }
 
+  _runInputMish(input: Float32Array): Float32Array {
+    this.outputs[0] = input; // set output state of input layer
+
+    let output = null;
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      const activeSize = this.sizes[layer];
+      const activeWeights = this.weights[layer];
+      const activeBiases = this.biases[layer];
+      const activeOutputs = this.outputs[layer];
+      const activeOutputsPA = this.outputsPreActivation[layer];
+      for (let node = 0; node < activeSize; node++) {
+        const weights = activeWeights[node];
+
+        let sum = activeBiases[node];
+        for (let k = 0; k < weights.length; k++) {
+          sum += weights[k] * input[k];
+        }
+        activeOutputsPA[node] = sum;
+        // mish
+        const safePa = Math.max(Math.min(sum, 80), -80);
+        activeOutputs[node] =
+          safePa * Math.tanh(Math.log(1 + Math.exp(safePa)));
+      }
+      output = input = activeOutputs;
+    }
+    if (!output) {
+      throw new Error('output was empty');
+    }
+    return output;
+  }
+
   /**
    *
    * Verifies network sizes are initialized
@@ -507,7 +550,7 @@ export class NeuralNetwork<
   validateTrainingOptions(options: INeuralNetworkTrainOptions): void {
     const validations: { [fnName: string]: () => boolean } = {
       activation: () => {
-        return ['sigmoid', 'relu', 'leaky-relu', 'tanh'].includes(
+        return ['sigmoid', 'relu', 'leaky-relu', 'tanh', 'mish'].includes(
           options.activation
         );
       },
@@ -883,6 +926,38 @@ export class NeuralNetwork<
         }
         // currentErrors[node] = error;
         currentDeltas[node] = (1 - output * output) * error;
+      }
+    }
+  }
+
+  _calculateDeltasMish(target: Float32Array): void {
+    for (let layer = this.outputLayer; layer > 0; layer--) {
+      const currentSize = this.sizes[layer];
+      const currentOutputs = this.outputs[layer];
+      const currentOutputsPA = this.outputsPreActivation[layer];
+      const nextDeltas = this.deltas[layer + 1];
+      const nextWeights = this.weights[layer + 1];
+      const currentErrors = this.errors[layer];
+      const currentDeltas = this.deltas[layer];
+
+      for (let node = 0; node < currentSize; node++) {
+        const output = currentOutputs[node];
+        const pa = currentOutputsPA[node];
+
+        let error = 0;
+        if (layer === this.outputLayer) {
+          currentErrors[node] = error = target[node] - output;
+        } else {
+          for (let k = 0; k < nextDeltas.length; k++) {
+            error += nextDeltas[k] * nextWeights[k][node];
+          }
+        }
+        const softX = Math.max(Math.min(pa, 80), -80);
+        const sp = Math.log(1 + Math.exp(softX));
+        const tsp = Math.tanh(sp);
+        const sigx = 1 / (1 + Math.exp(-softX));
+        const back = tsp + softX * sigx * (1 - tsp * tsp);
+        currentDeltas[node] = error * back;
       }
     }
   }
