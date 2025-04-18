@@ -79,7 +79,7 @@ function weightedSumLeakyRelu(
     sum += weights[this.thread.x][k] * inputs[k];
   }
   // leaky relu
-  return sum < 0 ? 0 : 0.01 * sum;
+  return sum < 0 ? 0.01 * sum : sum;
 }
 
 function weightedSumTanh(
@@ -140,6 +140,59 @@ interface ILearningKernelThis extends IKernelFunctionThis {
   };
 }
 
+type ChangeePropagate = ((
+  this: IKernelFunctionThis<{
+    learningRate: number;
+    momentum: number;
+  }>,
+  previousOutputs: number[],
+  deltas: number[],
+  weights: number[][],
+  previousChanges: number[][]
+) => IMappedKernelResult) &
+  IKernelMapRunShortcut<{ weights: number[][]; changes: number[][] }>;
+
+type ChangeePropagateAdam = ((
+  this: IKernelFunctionThis<{
+    iterations: number;
+    beta1: number;
+    beta2: number;
+    epsilon: number;
+    learningRate: number;
+  }>,
+  previousOutputs: number[],
+  deltas: number[],
+  weights: number[][],
+  currentChangesLow: number[][],
+  currentChangesHigh: number[][]
+) => IMappedKernelResult) &
+  IKernelMapRunShortcut<{
+    weights: number[][];
+    changesLow: number[][];
+    changesHigh: number[][];
+  }>;
+
+type ChangeePropagateAdamW = ((
+  this: IKernelFunctionThis<{
+    iterations: number;
+    beta1: number;
+    beta2: number;
+    epsilon: number;
+    learningRate: number;
+    weightDecay: number;
+  }>,
+  previousOutputs: number[],
+  deltas: number[],
+  weights: number[][],
+  currentChangesLow: number[][],
+  currentChangesHigh: number[][]
+) => IMappedKernelResult) &
+  IKernelMapRunShortcut<{
+    weights: number[][];
+    changesLow: number[][];
+    changesHigh: number[][];
+  }>;
+
 function calcChanges(
   learningRate: number,
   momentum: number,
@@ -150,9 +203,78 @@ function calcChanges(
   return learningRate * delta * previousOutput + momentum * previousChange;
 }
 
+function calcChangesLowAdam(
+  changeLow: number,
+  beta1: number,
+  gradient: number
+): number {
+  return changeLow * beta1 + (1 - beta1) * gradient;
+}
+
+function calcChangesHighAdam(
+  changeHigh: number,
+  beta2: number,
+  gradient: number
+): number {
+  return changeHigh * beta2 + (1 - beta2) * gradient * gradient;
+}
+
 function addWeights(change: number, weight: number): number {
   return change + weight;
 }
+
+function addWeightsAdam(
+  weight: number,
+  learningRate: number,
+  momentumCorrection: number,
+  gradientCorrection: number,
+  epsilon: number
+): number {
+  return (
+    weight +
+    (learningRate * momentumCorrection) /
+      (Math.sqrt(gradientCorrection) + epsilon)
+  );
+}
+
+function addWeightsAdamW(
+  weight: number,
+  learningRate: number,
+  momentumCorrection: number,
+  gradientCorrection: number,
+  epsilon: number,
+  weightDecay: number
+): number {
+  return (
+    weight * (1 - learningRate * weightDecay) +
+    (learningRate * momentumCorrection) /
+      (Math.sqrt(gradientCorrection) + epsilon)
+  );
+}
+
+type BiasesPropagate = (
+  biases: KernelOutput,
+  deltas: KernelOutput
+) => KernelOutput;
+
+type BiasesPropagateAdam = ((
+  this: IKernelFunctionThis<{
+    iterations: number;
+    beta1: number;
+    beta2: number;
+    epsilon: number;
+    learningRate: number;
+  }>,
+  deltas: number[],
+  biases: number[],
+  currentBiasChangesLow: number[],
+  currentBiasChangesHigh: number[]
+) => IMappedKernelResult) &
+  IKernelMapRunShortcut<{
+    biases: number[];
+    biasChangesLow: number[];
+    biasChangesHigh: number[];
+  }>;
 
 function addBiases(
   this: ILearningKernelThis,
@@ -162,6 +284,36 @@ function addBiases(
   return (
     biases[this.thread.x] + deltas[this.thread.x] * this.constants.learningRate
   );
+}
+
+function addBiasesAdam(
+  biase: number,
+  biasMomentumCorrection: number,
+  biasGradientCorrection: number,
+  learningRate: number,
+  epsilon: number
+): number {
+  return (
+    biase +
+    (learningRate * biasMomentumCorrection) /
+      (Math.sqrt(biasGradientCorrection) + epsilon)
+  );
+}
+
+function calcBiasChangesLowAdam(
+  biasChangeLow: number,
+  beta1: number,
+  biasGradient: number
+): number {
+  return biasChangeLow * beta1 + (1 - beta1) * biasGradient;
+}
+
+function calcBiasChangesHighAdam(
+  biasChangeHigh: number,
+  beta2: number,
+  biasGradient: number
+): number {
+  return biasChangeHigh * beta2 + (1 - beta2) * biasGradient * biasGradient;
 }
 
 // mean squared error, reimplemented for GPU
@@ -211,23 +363,10 @@ export class NeuralNetworkGPU<
   backwardPropagate: Array<BackPropagateOutput | BackPropagateLayer> = [];
 
   changesPropagate: Array<
-    ((
-      this: IKernelFunctionThis<{
-        size: number;
-        learningRate: number;
-        momentum: number;
-      }>,
-      previousOutputs: number[],
-      deltas: number[],
-      weights: number[][],
-      previousChanges: number[][]
-    ) => IMappedKernelResult) &
-      IKernelMapRunShortcut<{ weights: number[][]; changes: number[][] }>
+    ChangeePropagate | ChangeePropagateAdam | ChangeePropagateAdamW
   > = [];
 
-  biasesPropagate: Array<
-    (biases: KernelOutput, deltas: KernelOutput) => KernelOutput
-  > = [];
+  biasesPropagate: Array<BiasesPropagate | BiasesPropagateAdam> = [];
 
   getMSE: (error: KernelOutput) => KernelOutput = () => {
     throw new Error('not yet setup');
@@ -259,6 +398,18 @@ export class NeuralNetworkGPU<
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
   biases: KernelOutput[] = [];
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  changesLow: KernelOutput[] = [];
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  changesHigh: KernelOutput[] = [];
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  biasChangesLow: KernelOutput[] = [];
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-expect-error
+  biasChangesHigh: KernelOutput[] = [];
 
   constructor(options: Partial<INeuralNetworkGPUOptions> = {}) {
     super(options);
@@ -275,7 +426,7 @@ export class NeuralNetworkGPU<
     this.buildGetMSE();
   }
 
-  setActivation(): void {}
+  // setActivation(): void {}
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
@@ -307,9 +458,10 @@ export class NeuralNetworkGPU<
     }
     const result = this._divideMSESum(data.length, sum);
     release(sum);
-    return (result instanceof Texture
+    const res = (result instanceof Texture
       ? (result.toArray() as number[])
       : (result as number[]))[0];
+    return res;
   }
 
   adjustWeights(): void {
@@ -346,7 +498,7 @@ export class NeuralNetworkGPU<
         constants: {
           size: this.sizes[layer - 1],
         },
-        immutable: true,
+        immutable: true, // false
       });
     }
 
@@ -496,60 +648,204 @@ export class NeuralNetworkGPU<
   buildGetChanges(): void {
     const { praxis } = this.trainOpts;
     if (praxis === 'adam') {
-      throw new Error('Adam is not yet implemented for GPU');
-      // for (let layer = 1; layer <= this.outputLayer; layer++) {}
+      this._buildGetChangesAdam();
     } else if (praxis === 'adamw') {
-      throw new Error('AdamW is not yet implemented for GPU');
-      // for (let layer = 1; layer <= this.outputLayer; layer++) {}
+      this._buildGetChangesAdamW();
     } else {
-      for (let layer = 1; layer <= this.outputLayer; layer++) {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-expect-error
-        this.changesPropagate[layer] = this.gpu.createKernelMap(
-          {
-            weights: addWeights,
-            changes: calcChanges,
+      this._buildGetChanges();
+    }
+  }
+
+  _buildGetChanges(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      this.changesPropagate[layer] = this.gpu.createKernelMap(
+        {
+          weights: addWeights,
+          changes: calcChanges,
+        },
+        function (
+          this: IKernelFunctionThis<{
+            learningRate: number;
+            momentum: number;
+          }>,
+          previousOutputs: number[],
+          deltas: number[],
+          weights: number[][],
+          previousChanges: number[][]
+        ) {
+          const change = calcChanges(
+            this.constants.learningRate,
+            this.constants.momentum,
+            previousChanges[this.thread.y][this.thread.x],
+            deltas[this.thread.y],
+            previousOutputs[this.thread.x]
+          );
+          return addWeights(change, weights[this.thread.y][this.thread.x]);
+        },
+        {
+          output: [this.sizes[layer - 1], this.sizes[layer]],
+          pipeline: true,
+          constants: {
+            learningRate: this.trainOpts.learningRate,
+            momentum: this.trainOpts.momentum,
           },
-          function (
-            this: IKernelFunctionThis<{
-              size: number;
-              learningRate: number;
-              momentum: number;
-            }>,
-            previousOutputs: number[],
-            deltas: number[],
-            weights: number[][],
-            previousChanges: number[][]
-          ) {
-            const change = calcChanges(
-              this.constants.learningRate,
-              this.constants.momentum,
-              previousChanges[this.thread.y][this.thread.x],
-              deltas[this.thread.y],
-              previousOutputs[this.thread.x]
-            );
-            return addWeights(change, weights[this.thread.y][this.thread.x]);
+          immutable: true,
+        }
+      );
+    }
+  }
+
+  _buildGetChangesAdam(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      this.changesPropagate[layer] = this.gpu.createKernelMap(
+        {
+          changesLow: calcChangesLowAdam,
+          changesHigh: calcChangesHighAdam,
+          weights: addWeightsAdam,
+        },
+        function (
+          this: IKernelFunctionThis<{
+            iterations: number;
+            beta1: number;
+            beta2: number;
+            epsilon: number;
+            learningRate: number;
+          }>,
+          previousOutputs: number[],
+          deltas: number[],
+          weights: number[][],
+          currentChangesLow: number[][],
+          currentChangesHigh: number[][]
+        ) {
+          const gradient =
+            deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const changeLow = calcChangesLowAdam(
+            currentChangesLow[this.thread.y][this.thread.x],
+            this.constants.beta1,
+            gradient
+          );
+          const changeHigh = calcChangesHighAdam(
+            currentChangesHigh[this.thread.y][this.thread.x],
+            this.constants.beta2,
+            gradient
+          );
+          const momentumCorrection =
+            changeLow /
+            (1 - Math.pow(this.constants.beta1, this.constants.iterations));
+          const gradientCorrection =
+            changeHigh /
+            (1 - Math.pow(this.constants.beta2, this.constants.iterations));
+          return addWeightsAdam(
+            weights[this.thread.y][this.thread.x],
+            this.constants.learningRate,
+            momentumCorrection,
+            gradientCorrection,
+            this.constants.epsilon
+          );
+        },
+        {
+          output: [this.sizes[layer - 1], this.sizes[layer]],
+          pipeline: true,
+          constants: {
+            learningRate: this.trainOpts.learningRate,
+            beta1: this.trainOpts.beta1,
+            beta2: this.trainOpts.beta2,
+            epsilon: this.trainOpts.epsilon,
           },
-          {
-            output: [this.sizes[layer - 1], this.sizes[layer]],
-            pipeline: true,
-            constants: {
-              size: this.sizes[layer - 1],
-              learningRate: this.trainOpts.learningRate,
-              momentum: this.trainOpts.momentum,
-            },
-            immutable: true,
-          }
-        );
-      }
+          immutable: true,
+        }
+      );
+    }
+  }
+
+  _buildGetChangesAdamW(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      this.changesPropagate[layer] = this.gpu.createKernelMap(
+        {
+          changesLow: calcChangesLowAdam,
+          changesHigh: calcChangesHighAdam,
+          weights: addWeightsAdamW,
+        },
+        function (
+          this: IKernelFunctionThis<{
+            iterations: number;
+            beta1: number;
+            beta2: number;
+            epsilon: number;
+            learningRate: number;
+            weightDecay: number;
+          }>,
+          previousOutputs: number[],
+          deltas: number[],
+          weights: number[][],
+          currentChangesLow: number[][],
+          currentChangesHigh: number[][]
+        ) {
+          const gradient =
+            deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const changeLow = calcChangesLowAdam(
+            currentChangesLow[this.thread.y][this.thread.x],
+            this.constants.beta1,
+            gradient
+          );
+          const changeHigh = calcChangesHighAdam(
+            currentChangesHigh[this.thread.y][this.thread.x],
+            this.constants.beta2,
+            gradient
+          );
+          const momentumCorrection =
+            changeLow /
+            (1 - Math.pow(this.constants.beta1, this.constants.iterations));
+          const gradientCorrection =
+            changeHigh /
+            (1 - Math.pow(this.constants.beta2, this.constants.iterations));
+          return addWeightsAdamW(
+            weights[this.thread.y][this.thread.x],
+            this.constants.learningRate,
+            momentumCorrection,
+            gradientCorrection,
+            this.constants.epsilon,
+            this.constants.weightDecay
+          );
+        },
+        {
+          output: [this.sizes[layer - 1], this.sizes[layer]],
+          pipeline: true,
+          constants: {
+            learningRate: this.trainOpts.learningRate,
+            beta1: this.trainOpts.beta1,
+            beta2: this.trainOpts.beta2,
+            epsilon: this.trainOpts.epsilon,
+            weightDecay: this.trainOpts.weightDecay,
+          },
+          immutable: true,
+        }
+      );
     }
   }
 
   getChanges(): void {
+    const { praxis } = this.trainOpts;
+    if (praxis === 'adam') {
+      this._getChangesAdam<ChangeePropagateAdam>();
+    } else if (praxis === 'adamw') {
+      this._getChangesAdam<ChangeePropagateAdamW>();
+    } else {
+      this._getChanges();
+    }
+  }
+
+  _getChanges(): void {
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       const weights = this.weights[layer];
       const changes = this.changes[layer];
-      const output = this.changesPropagate[layer](
+      const output = (this.changesPropagate[layer] as ChangeePropagate)(
         this.outputs[layer - 1],
         this.deltas[layer],
         weights,
@@ -563,7 +859,43 @@ export class NeuralNetworkGPU<
     }
   }
 
+  _getChangesAdam<
+    T extends ChangeePropagateAdam | ChangeePropagateAdamW
+  >(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      const weights = this.weights[layer];
+      const changesLow = this.changesLow[layer];
+      const changesHigh = this.changesHigh[layer];
+      const changesPropagate = this.changesPropagate[layer] as T;
+      const output = changesPropagate.setConstants({
+        iterations: this.iterations,
+      })(
+        this.outputs[layer - 1],
+        this.deltas[layer],
+        weights,
+        changesLow,
+        changesHigh
+      );
+      release(weights);
+      release(changesLow);
+      release(changesHigh);
+      this.weights[layer] = output.weights;
+      this.changesLow[layer] = output.changesLow;
+      this.changesHigh[layer] = output.changesHigh;
+      release(output.result);
+    }
+  }
+
   buildChangeBiases(): void {
+    const { praxis } = this.trainOpts;
+    if (praxis === 'adam' || praxis === 'adamw') {
+      this._buildChangeBiasesAdam();
+    } else {
+      this._buildChangeBiases();
+    }
+  }
+
+  _buildChangeBiases(): void {
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       this.biasesPropagate[layer] = this.gpu.createKernel(addBiases, {
         output: [this.sizes[layer]],
@@ -576,14 +908,108 @@ export class NeuralNetworkGPU<
     }
   }
 
+  _buildChangeBiasesAdam(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
+      this.biasesPropagate[layer] = this.gpu.createKernelMap(
+        {
+          biases: addBiasesAdam,
+          biasChangesLow: calcBiasChangesLowAdam,
+          biasChangesHigh: calcBiasChangesHighAdam,
+        },
+        function (
+          this: IKernelFunctionThis<{
+            iterations: number;
+            beta1: number;
+            beta2: number;
+            epsilon: number;
+            learningRate: number;
+          }>,
+          deltas: number[],
+          biases: number[],
+          currentBiasChangesLow: number[],
+          currentBiasChangesHigh: number[]
+        ) {
+          const biasGradient = deltas[this.thread.x];
+          const biasChangeLow = calcBiasChangesLowAdam(
+            currentBiasChangesLow[this.thread.x],
+            this.constants.beta1,
+            biasGradient
+          );
+          const biasChangeHigh = calcBiasChangesHighAdam(
+            currentBiasChangesHigh[this.thread.x],
+            this.constants.beta2,
+            biasGradient
+          );
+          const biasMomentumCorrection =
+            biasChangeLow /
+            (1 - Math.pow(this.constants.beta1, this.constants.iterations));
+          const biasGradientCorrection =
+            biasChangeHigh /
+            (1 - Math.pow(this.constants.beta2, this.constants.iterations));
+
+          return addBiasesAdam(
+            biases[this.thread.x],
+            biasMomentumCorrection,
+            biasGradientCorrection,
+            this.constants.learningRate,
+            this.constants.epsilon
+          );
+        },
+        {
+          output: [this.sizes[layer]],
+          pipeline: true,
+          constants: {
+            learningRate: this.trainOpts.learningRate,
+            beta1: this.trainOpts.beta1,
+            beta2: this.trainOpts.beta2,
+            epsilon: this.trainOpts.epsilon,
+          },
+          immutable: true,
+        }
+      );
+    }
+  }
+
   changeBiases(): void {
+    const { praxis } = this.trainOpts;
+    if (praxis === 'adam' || praxis === 'adamw') {
+      this._changeBiasesAdam();
+    } else {
+      this._changeBiases();
+    }
+  }
+
+  _changeBiases(): void {
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       const biases = this.biases[layer];
-      this.biases[layer] = this.biasesPropagate[layer](
+      this.biases[layer] = (this.biasesPropagate[layer] as BiasesPropagate)(
         biases,
         this.deltas[layer]
       );
       release(biases);
+    }
+  }
+
+  _changeBiasesAdam(): void {
+    for (let layer = 1; layer <= this.outputLayer; layer++) {
+      const biases = this.biases[layer];
+      const biasChangeeLow = this.biasChangesLow[layer];
+      const biasChangeeHigh = this.biasChangesHigh[layer];
+      const biasesPropagate = this.biasesPropagate[
+        layer
+      ] as BiasesPropagateAdam;
+      const output = biasesPropagate.setConstants({
+        iterations: this.iterations,
+      })(this.deltas[layer], biases, biasChangeeLow, biasChangeeHigh);
+      release(biases);
+      release(biasChangeeLow);
+      release(biasChangeeHigh);
+      this.biases[layer] = output.biases;
+      this.biasChangesLow[layer] = output.biasChangesLow;
+      this.biasChangesHigh[layer] = output.biasChangesHigh;
+      release(output.result);
     }
   }
 
@@ -616,6 +1042,7 @@ export class NeuralNetworkGPU<
       },
       {
         output: [1],
+        // pipeline: false,
       }
     );
   }
@@ -701,18 +1128,20 @@ export class NeuralNetworkGPU<
     }
     // use Array.from, keeping json small
     const jsonLayerWeights = this.weights.map((layerWeights) => {
-      return (layerWeights instanceof Texture
+      const res = (layerWeights instanceof Texture
         ? (layerWeights.toArray() as Float32Array[])
         : (layerWeights as Float32Array[])
       ).map((layerWeights) => Array.from(layerWeights));
+      return res;
     });
-    const jsonLayerBiases = this.biases.map((layerBiases) =>
-      Array.from(
+    const jsonLayerBiases = this.biases.map((layerBiases) => {
+      const res = Array.from(
         layerBiases instanceof Texture
           ? (layerBiases.toArray() as Float32Array)
           : (layerBiases as Float32Array)
-      )
-    );
+      );
+      return res;
+    });
     const jsonLayers: IJSONLayer[] = [];
     for (let i = 0; i <= this.outputLayer; i++) {
       jsonLayers.push({
