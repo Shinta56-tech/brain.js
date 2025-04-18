@@ -79,7 +79,7 @@ function weightedSumLeakyRelu(
     sum += weights[this.thread.x][k] * inputs[k];
   }
   // leaky relu
-  return sum < 0 ? 0.01 * sum : sum;
+  return sum < 0 ? 0 : 0.01 * sum;
 }
 
 function weightedSumTanh(
@@ -833,8 +833,10 @@ export class NeuralNetworkGPU<
   getChanges(): void {
     const { praxis } = this.trainOpts;
     if (praxis === 'adam') {
+      this.iterations++;
       this._getChangesAdam<ChangeePropagateAdam>();
     } else if (praxis === 'adamw') {
+      this.iterations++;
       this._getChangesAdam<ChangeePropagateAdamW>();
     } else {
       this._getChanges();

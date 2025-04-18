@@ -64,11 +64,13 @@ describe('NeuralNetwork bitwise', () => {
       }>
     ) {
       const net = new NeuralNetwork<number[], number[]>();
-      net.train(data, {
+      const stauts = net.train(data, {
         errorThresh: 0.003,
         learningRate: 0.05,
         praxis: 'adamw',
       });
+
+      console.log(stauts);
 
       data.forEach((d) => {
         const actual = net.run(d.input);
