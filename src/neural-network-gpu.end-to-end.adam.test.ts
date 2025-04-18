@@ -8,7 +8,7 @@ describe('NeuralNetworkGPU Class: End to End', () => {
       iterations: Infinity,
       errorThresh: 0.01,
       activation: 'leaky-relu',
-      //praxis: 'adamw',
+      // praxis: 'adamw',
       log: true,
       logPeriod: 1,
     });
