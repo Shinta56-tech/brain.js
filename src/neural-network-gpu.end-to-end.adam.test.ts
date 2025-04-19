@@ -1,4 +1,5 @@
 import { NeuralNetworkGPU } from './neural-network-gpu';
+import { NeuralNetwork } from './neural-network';
 import { xorTrainingData } from './test-utils';
 
 describe('NeuralNetworkGPU Class: End to End', () => {

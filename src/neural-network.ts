@@ -1215,11 +1215,11 @@ export class NeuralNetwork<
     }
 
     // if (!this._formatInput) {
-    //   this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
+    this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
     // }
 
     // if (!this._formatOutput) {
-    //   this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
+    this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
     // }
 
     // turn sparse hash input into arrays with 0s as filler

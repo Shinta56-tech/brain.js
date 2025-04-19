@@ -359,9 +359,9 @@ export class NeuralNetworkGPU<
 > extends NeuralNetwork<InputType, OutputType> {
   gpu: GPU;
 
-  texturizeInputData: (value: KernelOutput) => KernelOutput = () => {
-    throw new Error('not yet setup');
-  };
+  // texturizeInputData: (value: KernelOutput) => KernelOutput = () => {
+  //   throw new Error('not yet setup');
+  // };
 
   forwardPropagate: WeightedSum[] = [];
 
@@ -434,7 +434,7 @@ export class NeuralNetworkGPU<
     this.buildGetMSE();
   }
 
-  // setActivation(): void {}
+  setActivation(): void {}
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
@@ -500,7 +500,10 @@ export class NeuralNetworkGPU<
           `Unknown activation ${this.trainOpts.activation}. Available activations are: 'sigmoid', 'relu', 'leaky-relu', 'tanh'`
         );
     }
-
+    weightedSum = alias(
+      utils.getMinifySafeName(() => weightedSum),
+      weightedSum
+    );
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       this.forwardPropagate[layer] = this.gpu.createKernelMap(
         {
@@ -531,16 +534,15 @@ export class NeuralNetworkGPU<
       ) as WeightedSum;
     }
 
-    this.texturizeInputData = this.gpu.createKernel(
-      function (value: number[]): number {
-        return value[this.thread.x];
-      },
-      {
-        output: [this.sizes[1]],
-        pipeline: true,
-        immutable: true,
-      }
-    );
+    // this.texturizeInputData = this.gpu.createKernel(
+    //   function (value: number[]): number {
+    //     return value[this.thread.x];
+    //   },
+    //   {
+    //     pipeline: true,
+    //     immutable: true,
+    //   }
+    // );
   }
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -550,6 +552,7 @@ export class NeuralNetworkGPU<
     this.outputs[0] = input;
     for (let layer = 1; layer <= this.outputLayer; layer++) {
       release(this.outputs[layer]);
+      release(this.outputsPreActivation[layer]);
       const outputs = this.forwardPropagate[layer](
         this.weights[layer],
         this.biases[layer],
@@ -1149,19 +1152,25 @@ export class NeuralNetworkGPU<
         return value[this.thread.x];
       },
       {
-        output: [preparedData[0].output.length],
         pipeline: true,
         immutable: true,
       }
     );
-    return {
-      preparedData: preparedData.map((set) => ({
-        input: this.texturizeInputData(set.input),
-        output: texturizeOutputData(set.output),
-      })),
-      status,
-      endTime,
-    };
+
+    try {
+      return {
+        preparedData: preparedData.map((set) => ({
+          input: texturizeOutputData.setOutput([set.input.length])(set.input),
+          output: texturizeOutputData.setOutput([set.output.length])(
+            set.output
+          ),
+        })),
+        status,
+        endTime,
+      };
+    } finally {
+      texturizeOutputData.destroy();
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
