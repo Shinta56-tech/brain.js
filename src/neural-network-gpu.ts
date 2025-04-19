@@ -884,10 +884,8 @@ export class NeuralNetworkGPU<
   getChanges(): void {
     const { praxis } = this.trainOpts;
     if (praxis === 'adam') {
-      this.iterations++;
       this._getChangesAdam<ChangeePropagateAdam>();
     } else if (praxis === 'adamw') {
-      this.iterations++;
       this._getChangesAdam<ChangeePropagateAdamW>();
     } else {
       this._getChanges();
@@ -936,6 +934,7 @@ export class NeuralNetworkGPU<
       this.changesLow[layer] = output.changesLow;
       this.changesHigh[layer] = output.changesHigh;
       release(output.result);
+      if (layer !== this.outputLayer) this.iterations++;
     }
   }
 
