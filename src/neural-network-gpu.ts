@@ -76,7 +76,8 @@ function weightedSumMish(sum: number): number {
 }
 
 function calcErrorOutput(output: number, target: number): number {
-  return target - output;
+  const error = target - output;
+  return Math.abs(target) > 1 ? error / Math.abs(target) : error;
 }
 
 function calcDeltasSigmoid(
@@ -680,19 +681,7 @@ export class NeuralNetworkGPU<
           target,
           this.outputsPreActivation[layer]
         );
-        if (this.trainOpts.errorMapping) {
-          for (let node = 0; node < this.sizes[layer]; node++) {
-            (this.errors as number[][])[layer][
-              node
-            ] = this.trainOpts.errorMapping(
-              (target as number[])[node],
-              (output.result as number[])[node],
-              node
-            );
-          }
-        } else {
-          this.errors[layer] = output.error;
-        }
+        this.errors[layer] = output.error;
       } else {
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error

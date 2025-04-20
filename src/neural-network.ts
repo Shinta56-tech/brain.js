@@ -119,7 +119,6 @@ export interface INeuralNetworkTrainOptions {
   beta2: number;
   epsilon: number;
   weightDecay: number;
-  errorMapping?: (target: number, output: number, node: number) => number;
 }
 
 export function trainDefaults(): INeuralNetworkTrainOptions {
@@ -840,15 +839,8 @@ export class NeuralNetwork<
         let error = 0;
         if (layer === this.outputLayer) {
           error = target[node] - output;
-          if (this.trainOpts.errorMapping) {
-            activeError[node] = this.trainOpts.errorMapping(
-              target[node],
-              output,
-              node
-            );
-          } else {
-            activeError[node] = error;
-          }
+          activeError[node] =
+            Math.abs(target[node]) > 1 ? error / Math.abs(target[node]) : error;
         } else {
           const deltas = this.deltas[layer + 1];
           for (let k = 0; k < deltas.length; k++) {
@@ -875,7 +867,9 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          currentErrors[node] = error = target[node] - output;
+          error = target[node] - output;
+          currentErrors[node] =
+            Math.abs(target[node]) > 1 ? error / Math.abs(target[node]) : error;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
@@ -902,7 +896,9 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          currentErrors[node] = error = target[node] - output;
+          error = target[node] - output;
+          currentErrors[node] =
+            Math.abs(target[node]) > 1 ? error / Math.abs(target[node]) : error;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
@@ -928,7 +924,9 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          currentErrors[node] = error = target[node] - output;
+          error = target[node] - output;
+          currentErrors[node] =
+            Math.abs(target[node]) > 1 ? error / Math.abs(target[node]) : error;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
@@ -956,7 +954,9 @@ export class NeuralNetwork<
 
         let error = 0;
         if (layer === this.outputLayer) {
-          currentErrors[node] = error = target[node] - output;
+          error = target[node] - output;
+          currentErrors[node] =
+            Math.abs(target[node]) > 1 ? error / Math.abs(target[node]) : error;
         } else {
           for (let k = 0; k < nextDeltas.length; k++) {
             error += nextDeltas[k] * nextWeights[k][node];
