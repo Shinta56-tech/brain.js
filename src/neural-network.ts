@@ -308,7 +308,7 @@ export class NeuralNetwork<
       }
     }
 
-    console.log('update sizes:', this.sizes);
+    if (increasedSizes.length > 0) console.log('update sizes:', this.sizes);
 
     this.setActivation();
     if (['adam', 'adamw'].includes(this.trainOpts.praxis as string)) {
