@@ -13,9 +13,11 @@ import { ITrainingStatus } from './feed-forward';
 import { INumberHash, lookup } from './lookup';
 import {
   IJSONLayer,
+  IJSONLayer2,
   INeuralNetworkData,
   INeuralNetworkDatum,
   INeuralNetworkJSON,
+  INeuralNetworkJSON2,
   INeuralNetworkOptions,
   INeuralNetworkPreppedTrainingData,
   INeuralNetworkTrainOptions,
@@ -1208,6 +1210,29 @@ export class NeuralNetworkGPU<
         biases: jsonLayerBiases[i] ?? [],
       });
     }
+    return {
+      type: 'NeuralNetworkGPU',
+      sizes: [...this.sizes],
+      layers: jsonLayers,
+      inputLookup: this.inputLookup ? { ...this.inputLookup } : null,
+      inputLookupLength: this.inputLookupLength,
+      outputLookup: this.outputLookup ? { ...this.outputLookup } : null,
+      outputLookupLength: this.outputLookupLength,
+      options: { ...this.options },
+      trainOpts: this.getTrainOptsJSON(),
+    };
+  }
+
+  toJSON2(): INeuralNetworkJSON2 {
+    if (this.sizes === null) {
+      this.initialize();
+    }
+    const jsonLayers: IJSONLayer2 = {
+      weights: this.weights as Float32Array[][],
+      biases: this.biases as Float32Array[],
+      biasChangesHigh: this.biasChangesHigh as Float32Array[],
+      biasChangesLow: this.biasChangesLow as Float32Array[],
+    };
     return {
       type: 'NeuralNetworkGPU',
       sizes: [...this.sizes],
