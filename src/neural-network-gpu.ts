@@ -245,7 +245,7 @@ function addWeightsAdam(
   return (
     weight +
     (learningRate * momentumCorrection) /
-    (Math.sqrt(gradientCorrection) + epsilon)
+      (Math.sqrt(gradientCorrection) + epsilon)
   );
 }
 
@@ -260,7 +260,7 @@ function addWeightsAdamW(
   return (
     weight * (1 - learningRate * weightDecay) +
     (learningRate * momentumCorrection) /
-    (Math.sqrt(gradientCorrection) + epsilon)
+      (Math.sqrt(gradientCorrection) + epsilon)
   );
 }
 
@@ -308,7 +308,7 @@ function addBiasesAdam(
   return (
     biase +
     (learningRate * biasMomentumCorrection) /
-    (Math.sqrt(biasGradientCorrection) + epsilon)
+      (Math.sqrt(biasGradientCorrection) + epsilon)
   );
 }
 
@@ -437,7 +437,7 @@ export class NeuralNetworkGPU<
     this.buildGetMSE();
   }
 
-  setActivation(): void { }
+  setActivation(): void {}
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error

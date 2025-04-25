@@ -248,7 +248,7 @@ export class NeuralNetwork<
     }
     increasedSizes.push(
       this.sizes[this.sizes.length - 1] -
-      (this.preSizes[this.preSizes.length - 1] || 0)
+        (this.preSizes[this.preSizes.length - 1] || 0)
     );
 
     this.outputLayer = this.sizes.length - 1;
@@ -674,8 +674,8 @@ export class NeuralNetwork<
         typeof log === 'function'
           ? true
           : typeof log === 'boolean'
-            ? log
-            : false,
+          ? log
+          : false,
       logPeriod,
       leakyReluAlpha,
       learningRate,
@@ -1450,7 +1450,12 @@ export class NeuralNetwork<
     return {
       type: 'NeuralNetwork',
       sizes: [...this.sizes],
-      layers: { weights: this.weights, biases: this.biases, biasChangesHigh: this.biasChangesHigh, biasChangesLow: this.biasChangesLow },
+      layers: {
+        weights: this.weights,
+        biases: this.biases,
+        biasChangesHigh: this.biasChangesHigh,
+        biasChangesLow: this.biasChangesLow,
+      },
       inputLookup: this.inputLookup ? { ...this.inputLookup } : null,
       inputLookupLength: this.inputLookupLength,
       outputLookup: this.outputLookup ? { ...this.outputLookup } : null,
@@ -1517,10 +1522,18 @@ export class NeuralNetwork<
     this.outputLookupLength = json.outputLookupLength;
 
     const jsonLayers = json.layers;
-    this.weights = jsonLayers.weights.map(layers => (layers || []).map(nodes => Float32Array.from(Object.values(nodes))));
-    this.biases = jsonLayers.biases.map(layers => Float32Array.from(Object.values(layers || {})));
-    this.biasChangesHigh = jsonLayers.biasChangesHigh.map(layers => Float32Array.from(Object.values(layers || {})));
-    this.biasChangesLow = jsonLayers.biasChangesLow.map(layers => Float32Array.from(Object.values(layers || {})));
+    this.weights = jsonLayers.weights.map((layers) =>
+      (layers || []).map((nodes) => Float32Array.from(Object.values(nodes)))
+    );
+    this.biases = jsonLayers.biases.map((layers) =>
+      Float32Array.from(Object.values(layers || {}))
+    );
+    this.biasChangesHigh = jsonLayers.biasChangesHigh.map((layers) =>
+      Float32Array.from(Object.values(layers || {}))
+    );
+    this.biasChangesLow = jsonLayers.biasChangesLow.map((layers) =>
+      Float32Array.from(Object.values(layers || {}))
+    );
 
     return this;
   }
