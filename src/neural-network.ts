@@ -64,6 +64,25 @@ export interface INeuralNetworkJSON {
   trainOpts: INeuralNetworkTrainOptionsJSON;
 }
 
+export interface IJSONLayer2 {
+  biases: Float32Array[];
+  weights: Float32Array[][];
+  biasChangesLow: Float32Array[];
+  biasChangesHigh: Float32Array[];
+}
+
+export interface INeuralNetworkJSON2 {
+  type: string;
+  sizes: number[];
+  layers: IJSONLayer2;
+  inputLookup: INumberHash | null;
+  inputLookupLength: number;
+  outputLookup: INumberHash | null;
+  outputLookupLength: number;
+  options: INeuralNetworkOptions;
+  trainOpts: INeuralNetworkTrainOptionsJSON;
+}
+
 export interface INeuralNetworkOptions {
   inputSize: number;
   outputSize: number;
@@ -229,7 +248,7 @@ export class NeuralNetwork<
     }
     increasedSizes.push(
       this.sizes[this.sizes.length - 1] -
-        (this.preSizes[this.preSizes.length - 1] || 0)
+      (this.preSizes[this.preSizes.length - 1] || 0)
     );
 
     this.outputLayer = this.sizes.length - 1;
@@ -655,8 +674,8 @@ export class NeuralNetwork<
         typeof log === 'function'
           ? true
           : typeof log === 'boolean'
-          ? log
-          : false,
+            ? log
+            : false,
       logPeriod,
       leakyReluAlpha,
       learningRate,
@@ -1424,6 +1443,23 @@ export class NeuralNetwork<
     };
   }
 
+  toJSON2(): INeuralNetworkJSON2 {
+    if (!this.isRunnable) {
+      this.initialize();
+    }
+    return {
+      type: 'NeuralNetwork',
+      sizes: [...this.sizes],
+      layers: { weights: this.weights, biases: this.biases, biasChangesHigh: this.biasChangesHigh, biasChangesLow: this.biasChangesLow },
+      inputLookup: this.inputLookup ? { ...this.inputLookup } : null,
+      inputLookupLength: this.inputLookupLength,
+      outputLookup: this.outputLookup ? { ...this.outputLookup } : null,
+      outputLookupLength: this.outputLookupLength,
+      options: { ...this.options },
+      trainOpts: this.getTrainOptsJSON(),
+    };
+  }
+
   fromJSON(json: INeuralNetworkJSON): this {
     this.options = { ...defaults(), ...json.options };
     if (json.hasOwnProperty('trainOpts')) {
@@ -1457,6 +1493,35 @@ export class NeuralNetwork<
       this.weights[i] = layerWeights[i] || [];
       this.biases[i] = layerBiases[i] || [];
     }
+    return this;
+  }
+
+  fromJSON2(json: INeuralNetworkJSON2): this {
+    this.options = { ...defaults(), ...json.options };
+    if (json.hasOwnProperty('trainOpts')) {
+      const trainOpts = {
+        ...json.trainOpts,
+        timeout:
+          json.trainOpts.timeout === 'Infinity'
+            ? Infinity
+            : json.trainOpts.timeout,
+      };
+      this.updateTrainingOptions(trainOpts);
+    }
+    this.sizes = json.sizes;
+    this.initialize();
+
+    this.inputLookup = json.inputLookup ? { ...json.inputLookup } : null;
+    this.inputLookupLength = json.inputLookupLength;
+    this.outputLookup = json.outputLookup ? { ...json.outputLookup } : null;
+    this.outputLookupLength = json.outputLookupLength;
+
+    const jsonLayers = json.layers;
+    this.weights = jsonLayers.weights.map(layers => (layers || []).map(nodes => Float32Array.from(Object.values(nodes))));
+    this.biases = jsonLayers.biases.map(layers => Float32Array.from(Object.values(layers || {})));
+    this.biasChangesHigh = jsonLayers.biasChangesHigh.map(layers => Float32Array.from(Object.values(layers || {})));
+    this.biasChangesLow = jsonLayers.biasChangesLow.map(layers => Float32Array.from(Object.values(layers || {})));
+
     return this;
   }
 

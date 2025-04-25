@@ -13,9 +13,11 @@ import { ITrainingStatus } from './feed-forward';
 import { INumberHash, lookup } from './lookup';
 import {
   IJSONLayer,
+  IJSONLayer2,
   INeuralNetworkData,
   INeuralNetworkDatum,
   INeuralNetworkJSON,
+  INeuralNetworkJSON2,
   INeuralNetworkOptions,
   INeuralNetworkPreppedTrainingData,
   INeuralNetworkTrainOptions,
@@ -243,7 +245,7 @@ function addWeightsAdam(
   return (
     weight +
     (learningRate * momentumCorrection) /
-      (Math.sqrt(gradientCorrection) + epsilon)
+    (Math.sqrt(gradientCorrection) + epsilon)
   );
 }
 
@@ -258,7 +260,7 @@ function addWeightsAdamW(
   return (
     weight * (1 - learningRate * weightDecay) +
     (learningRate * momentumCorrection) /
-      (Math.sqrt(gradientCorrection) + epsilon)
+    (Math.sqrt(gradientCorrection) + epsilon)
   );
 }
 
@@ -306,7 +308,7 @@ function addBiasesAdam(
   return (
     biase +
     (learningRate * biasMomentumCorrection) /
-      (Math.sqrt(biasGradientCorrection) + epsilon)
+    (Math.sqrt(biasGradientCorrection) + epsilon)
   );
 }
 
@@ -435,7 +437,7 @@ export class NeuralNetworkGPU<
     this.buildGetMSE();
   }
 
-  setActivation(): void {}
+  setActivation(): void { }
 
   // eslint-disable-next-line @typescript-eslint/ban-ts-comment
   // @ts-expect-error
@@ -1208,6 +1210,29 @@ export class NeuralNetworkGPU<
         biases: jsonLayerBiases[i] ?? [],
       });
     }
+    return {
+      type: 'NeuralNetworkGPU',
+      sizes: [...this.sizes],
+      layers: jsonLayers,
+      inputLookup: this.inputLookup ? { ...this.inputLookup } : null,
+      inputLookupLength: this.inputLookupLength,
+      outputLookup: this.outputLookup ? { ...this.outputLookup } : null,
+      outputLookupLength: this.outputLookupLength,
+      options: { ...this.options },
+      trainOpts: this.getTrainOptsJSON(),
+    };
+  }
+
+  toJSON2(): INeuralNetworkJSON2 {
+    if (this.sizes === null) {
+      this.initialize();
+    }
+    const jsonLayers: IJSONLayer2 = {
+      weights: this.weights as Float32Array[][],
+      biases: this.biases as Float32Array[],
+      biasChangesHigh: this.biasChangesHigh as Float32Array[],
+      biasChangesLow: this.biasChangesLow as Float32Array[],
+    };
     return {
       type: 'NeuralNetworkGPU',
       sizes: [...this.sizes],
