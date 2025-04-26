@@ -253,6 +253,10 @@ export class NeuralNetwork<
 
     this.outputLayer = this.sizes.length - 1;
 
+    const checkPraxis = ['adam', 'adamw'].includes(
+      this.trainOpts.praxis as string
+    );
+
     if (!this.biases) {
       this.biases = new Array(this.outputLayer); // weights for bias nodes
       this.weights = new Array(this.outputLayer);
@@ -261,7 +265,7 @@ export class NeuralNetwork<
 
       // state for training
       this.deltas = new Array(this.outputLayer);
-      this.changes = new Array(this.outputLayer); // for momentum
+      if (!checkPraxis) this.changes = new Array(this.outputLayer); // for momentum
       this.errors = new Array(this.outputLayer);
     }
 
@@ -295,15 +299,18 @@ export class NeuralNetwork<
           ...(this.weights[layerIndex] || []),
           ...new Array(increasedSize),
         ];
-        this.changes[layerIndex] = [
-          ...(this.changes[layerIndex] || []),
-          ...new Array(increasedSize),
-        ];
+        if (!checkPraxis) {
+          this.changes[layerIndex] = [
+            ...(this.changes[layerIndex] || []),
+            ...new Array(increasedSize),
+          ];
+        }
 
         for (let nodeIndex = originalSize; nodeIndex < size; nodeIndex++) {
           const prevSize = this.sizes[layerIndex - 1];
           this.weights[layerIndex][nodeIndex] = randos(prevSize);
-          this.changes[layerIndex][nodeIndex] = zeros(prevSize);
+          if (!checkPraxis)
+            this.changes[layerIndex][nodeIndex] = zeros(prevSize);
         }
       }
 
@@ -315,11 +322,13 @@ export class NeuralNetwork<
             return new Float32Array([...node, ...randos(increasedSize)]);
           }
         );
-        this.changes[nextLayerIndex] = this.changes[nextLayerIndex].map(
-          (node) => {
-            return new Float32Array([...node, ...zeros(increasedSize)]);
-          }
-        );
+        if (!checkPraxis) {
+          this.changes[nextLayerIndex] = this.changes[nextLayerIndex].map(
+            (node) => {
+              return new Float32Array([...node, ...zeros(increasedSize)]);
+            }
+          );
+        }
       }
 
       if (layerIndex === this.outputLayer) {
@@ -330,7 +339,7 @@ export class NeuralNetwork<
     if (increasedSizes.length > 0) console.log('update sizes:', this.sizes);
 
     this.setActivation();
-    if (['adam', 'adamw'].includes(this.trainOpts.praxis as string)) {
+    if (checkPraxis) {
       this._setupAdam();
     }
   }
