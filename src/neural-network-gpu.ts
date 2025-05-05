@@ -52,9 +52,24 @@ type WeightedSum = ((
     outputs: number[];
   }>;
 
+// GLSL 1.00 でも動く Infinity 判定
+function sanitize(v: number): number {
+  // ±Inf は有限範囲チェックで判定
+  // 1.0/0.0 は +Inf, -1.0/0.0 は -Inf としてコンパイル時定数になる
+  if (!(v < 1.0 / 0.0 && v > -1.0 / 0.0)) {
+    return v > 0.0 ? 3.4028235e38 : -3.4028235e38;
+  }
+  return v;
+}
+
+function clampf(x: number, minVal: number, maxVal: number): number {
+  return Math.min(Math.max(x, minVal), maxVal);
+}
+
 function weightedSumSigmoid(sum: number): number {
   // sigmoid
-  return 1 / (1 + Math.exp(-sum));
+  const softSum = Math.max(Math.min(sum, 80), -80);
+  return 1 / (1 + Math.exp(-softSum));
 }
 
 function weightedSumRelu(sum: number): number {
@@ -74,7 +89,8 @@ function weightedSumTanh(sum: number): number {
 
 function weightedSumMish(sum: number): number {
   // mish
-  return sum * Math.tanh(Math.log(1 + Math.exp(sum)));
+  const softSum = Math.max(Math.min(sum, 80), -80);
+  return softSum * Math.tanh(Math.log(1 + Math.exp(softSum)));
 }
 
 function calcErrorOutput(output: number, target: number): number {
@@ -226,9 +242,9 @@ function calcChangesLowAdam(
 function calcChangesHighAdam(
   changeHigh: number,
   beta2: number,
-  gradient: number
+  gradient2: number
 ): number {
-  return changeHigh * beta2 + (1 - beta2) * gradient * gradient;
+  return changeHigh * beta2 + (1 - beta2) * gradient2;
 }
 
 function addWeights(change: number, weight: number): number {
@@ -323,9 +339,9 @@ function calcBiasChangesLowAdam(
 function calcBiasChangesHighAdam(
   biasChangeHigh: number,
   beta2: number,
-  biasGradient: number
+  biasGradient2: number
 ): number {
-  return biasChangeHigh * beta2 + (1 - beta2) * biasGradient * biasGradient;
+  return biasChangeHigh * beta2 + (1 - beta2) * biasGradient2;
 }
 
 // mean squared error, reimplemented for GPU
@@ -481,6 +497,7 @@ export class NeuralNetworkGPU<
   }
 
   buildRunInput(): void {
+    this.gpu.addFunction(sanitize);
     let weightedSum: (sum: number) => number;
     switch (this.trainOpts.activation) {
       case 'sigmoid':
@@ -524,6 +541,7 @@ export class NeuralNetworkGPU<
           }
 
           weightedSum(sum);
+          sum = sanitize(sum);
           return sum;
         },
         {
@@ -700,6 +718,7 @@ export class NeuralNetworkGPU<
   };
 
   buildGetChanges(): void {
+    this.gpu.addFunction(clampf);
     const { praxis } = this.trainOpts;
     if (praxis === 'adam') {
       this._buildGetChangesAdam();
@@ -729,11 +748,14 @@ export class NeuralNetworkGPU<
           weights: number[][],
           previousChanges: number[][]
         ) {
+          const gRaw = deltas[this.thread.y];
+          const gClamped = clampf(gRaw, -5.0, 5.0);
+          const grad = sanitize(gClamped);
           const change = calcChanges(
             this.constants.learningRate,
             this.constants.momentum,
             previousChanges[this.thread.y][this.thread.x],
-            deltas[this.thread.y],
+            grad,
             previousOutputs[this.thread.x]
           );
           return addWeights(change, weights[this.thread.y][this.thread.x]);
@@ -775,17 +797,19 @@ export class NeuralNetworkGPU<
           currentChangesLow: number[][],
           currentChangesHigh: number[][]
         ) {
-          const gradient =
-            deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const gRaw = deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const gClamped = clampf(gRaw, -5.0, 5.0); // 勾配クリッピング
+          const gradient = sanitize(gClamped);
           const changeLow = calcChangesLowAdam(
             currentChangesLow[this.thread.y][this.thread.x],
             this.constants.beta1,
             gradient
           );
+          const gradient2 = sanitize(gradient * gradient);
           const changeHigh = calcChangesHighAdam(
             currentChangesHigh[this.thread.y][this.thread.x],
             this.constants.beta2,
-            gradient
+            gradient2
           );
           const momentumCorrection =
             changeLow /
@@ -841,17 +865,19 @@ export class NeuralNetworkGPU<
           currentChangesLow: number[][],
           currentChangesHigh: number[][]
         ) {
-          const gradient =
-            deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const gRaw = deltas[this.thread.y] * previousOutputs[this.thread.x];
+          const gClamped = clampf(gRaw, -5.0, 5.0); // 勾配クリッピング
+          const gradient = sanitize(gClamped);
           const changeLow = calcChangesLowAdam(
             currentChangesLow[this.thread.y][this.thread.x],
             this.constants.beta1,
             gradient
           );
+          const gradient2 = sanitize(gradient * gradient);
           const changeHigh = calcChangesHighAdam(
             currentChangesHigh[this.thread.y][this.thread.x],
             this.constants.beta2,
-            gradient
+            gradient2
           );
           const momentumCorrection =
             changeLow /
@@ -986,16 +1012,17 @@ export class NeuralNetworkGPU<
           currentBiasChangesLow: number[],
           currentBiasChangesHigh: number[]
         ) {
-          const biasGradient = deltas[this.thread.x];
+          const biasGradient = sanitize(clampf(deltas[this.thread.x], -5, 5));
           const biasChangeLow = calcBiasChangesLowAdam(
             currentBiasChangesLow[this.thread.x],
             this.constants.beta1,
             biasGradient
           );
+          const biasGradient2 = sanitize(biasGradient * biasGradient);
           const biasChangeHigh = calcBiasChangesHighAdam(
             currentBiasChangesHigh[this.thread.x],
             this.constants.beta2,
-            biasGradient
+            biasGradient2
           );
           const biasMomentumCorrection =
             biasChangeLow /
