@@ -336,7 +336,8 @@ export class NeuralNetwork<
       }
     }
 
-    if (increasedSizes.length > 0) console.log('update sizes:', this.sizes);
+    if (Math.max(...increasedSizes) > 0)
+      console.log('update sizes:', this.sizes);
 
     this.setActivation();
     if (checkPraxis) {
