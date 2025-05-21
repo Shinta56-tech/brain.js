@@ -1305,6 +1305,85 @@ export class NeuralNetwork<
     >;
   }
 
+  formatDataOriginal(
+    data: Array<INeuralNetworkDatum<InputType, OutputType>>
+  ): Array<INeuralNetworkDatumFormatted<Float32Array>> {
+    if (!Array.isArray(data[0].input)) {
+      if (this.inputLookup) {
+        this.inputLookupLength = Object.keys(this.inputLookup).length;
+      } else {
+        const inputLookup = new LookupTable(data, 'input');
+        this.inputLookup = inputLookup.table;
+        this.inputLookupLength = inputLookup.length;
+      }
+      console.log(`inputLookupLength: ${Object.keys(this.inputLookup).length}`);
+    }
+
+    if (!Array.isArray(data[0].output)) {
+      if (this.outputLookup) {
+        this.outputLookupLength = Object.keys(this.outputLookup).length;
+      } else {
+        const lookup = new LookupTable(data, 'output');
+        this.outputLookup = lookup.table;
+        this.outputLookupLength = lookup.length;
+      }
+      console.log(
+        `outputLookupLength: ${Object.keys(this.outputLookup).length}`
+      );
+    }
+
+    if (!this._formatInput) {
+      this._formatInput = getTypedArrayFn(data[0].input, this.inputLookup);
+    }
+
+    if (!this._formatOutput) {
+      this._formatOutput = getTypedArrayFn(data[0].output, this.outputLookup);
+    }
+
+    // turn sparse hash input into arrays with 0s as filler
+    if (this._formatInput && this._formatOutput) {
+      const result: Array<INeuralNetworkDatumFormatted<Float32Array>> = [];
+      for (let i = 0; i < data.length; i++) {
+        result.push({
+          input: (this._formatInput as (v: INumberHash) => Float32Array)(
+            (data[i].input as unknown) as INumberHash
+          ),
+          output: (this._formatOutput as (v: INumberHash) => Float32Array)(
+            (data[i].output as unknown) as INumberHash
+          ),
+        });
+      }
+      return result;
+    }
+    if (this._formatInput) {
+      const result: Array<INeuralNetworkDatumFormatted<Float32Array>> = [];
+      for (let i = 0; i < data.length; i++) {
+        result.push({
+          input: (this._formatInput as (v: INumberHash) => Float32Array)(
+            (data[i].input as unknown) as INumberHash
+          ),
+          output: (data[i].output as unknown) as Float32Array,
+        });
+      }
+      return result;
+    }
+    if (this._formatOutput) {
+      const result: Array<INeuralNetworkDatumFormatted<Float32Array>> = [];
+      for (let i = 0; i < data.length; i++) {
+        result.push({
+          input: (data[i].input as unknown) as Float32Array,
+          output: (this._formatOutput as (v: INumberHash) => Float32Array)(
+            (data[i].output as unknown) as INumberHash
+          ),
+        });
+      }
+      return result;
+    }
+    return (data as unknown) as Array<
+      INeuralNetworkDatumFormatted<Float32Array>
+    >;
+  }
+
   addFormat(data: INeuralNetworkDatum<InputType, OutputType>): void {
     if (!Array.isArray(data.input) || typeof data.input[0] !== 'number') {
       this.inputLookup = lookup.addKeys(
