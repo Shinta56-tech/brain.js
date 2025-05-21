@@ -1511,6 +1511,15 @@ export class NeuralNetwork<
     return this;
   }
 
+  fromJSONLookUp(json: INeuralNetworkJSON): this {
+    this.inputLookup = json.inputLookup ? { ...json.inputLookup } : null;
+    this.inputLookupLength = json.inputLookupLength;
+    this.outputLookup = json.outputLookup ? { ...json.outputLookup } : null;
+    this.outputLookupLength = json.outputLookupLength;
+
+    return this;
+  }
+
   fromJSON2(json: INeuralNetworkJSON2): this {
     this.options = { ...defaults(), ...json.options };
     if (json.hasOwnProperty('trainOpts')) {
